@@ -1,0 +1,135 @@
+import React from 'react'
+import { Routes, Route, Navigate } from 'react-router-dom'
+import { useAuth } from './context/AuthContext'
+import Layout from './components/Layout'
+import LoginPage from './pages/LoginPage'
+import DashboardPage from './pages/DashboardPage'
+import SuppliersPage from './pages/SuppliersPage'
+import InventoryPage from './pages/InventoryPage'
+import ProductDetailPage from './pages/ProductDetailPage'
+import OrdersPage from './pages/OrdersPage'
+import OrderDetailPage from './pages/OrderDetailPage'
+import NewOrderPage from './pages/NewOrderPage'
+import NotificationsPage from './pages/NotificationsPage'
+import ImportPage from './pages/ImportPage'
+import { ProtectedRoute } from './context/AuthContext'
+
+function ProtectedLayout({ children }) {
+  return (
+    <div className="min-h-screen flex">
+      <Layout>{children}</Layout>
+    </div>
+  )
+}
+
+export default function App() {
+  const { user, loading } = useAuth()
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <p className="text-gray-600">Cargando...</p>
+      </div>
+    )
+  }
+
+  return (
+    <Routes>
+      <Route
+        path="/iniciar-sesion"
+        element={user ? <Navigate to="/" replace /> : <LoginPage />}
+      />
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute>
+            <ProtectedLayout>
+              <DashboardPage />
+            </ProtectedLayout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/proveedores"
+        element={
+          <ProtectedRoute>
+            <ProtectedLayout>
+              <SuppliersPage />
+            </ProtectedLayout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/inventario"
+        element={
+          <ProtectedRoute>
+            <ProtectedLayout>
+              <InventoryPage />
+            </ProtectedLayout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/inventario/:productId"
+        element={
+          <ProtectedRoute>
+            <ProtectedLayout>
+              <ProductDetailPage />
+            </ProtectedLayout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/pedidos"
+        element={
+          <ProtectedRoute>
+            <ProtectedLayout>
+              <OrdersPage />
+            </ProtectedLayout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/pedidos/nuevo"
+        element={
+          <ProtectedRoute allowedRoles={['user', 'admin']}>
+            <ProtectedLayout>
+              <NewOrderPage />
+            </ProtectedLayout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/pedidos/:orderId"
+        element={
+          <ProtectedRoute>
+            <ProtectedLayout>
+              <OrderDetailPage />
+            </ProtectedLayout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/notificaciones"
+        element={
+          <ProtectedRoute>
+            <ProtectedLayout>
+              <NotificationsPage />
+            </ProtectedLayout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/importar"
+        element={
+          <ProtectedRoute allowedRoles={['admin']}>
+            <ProtectedLayout>
+              <ImportPage />
+            </ProtectedLayout>
+          </ProtectedRoute>
+        }
+      />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  )
+}
