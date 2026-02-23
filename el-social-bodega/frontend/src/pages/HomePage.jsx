@@ -79,16 +79,16 @@ export default function HomePage() {
             Plataforma inteligente para la gestión de inventario, proveedores y pedidos
             de El Social Medellín S.A.S
           </p>
-          <div className="flex gap-4 justify-center">
+          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
             <Link
               to="/registro"
-              className="px-6 py-3 bg-primary text-white rounded-md hover:bg-primary-dark transition-colors font-medium"
+              className="min-h-[44px] inline-flex items-center justify-center px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary-dark transition-colors font-medium"
             >
               Comenzar Ahora
             </Link>
             <Link
               to="/iniciar-sesion"
-              className="px-6 py-3 bg-white text-primary border-2 border-primary rounded-md hover:bg-primary/5 transition-colors font-medium"
+              className="min-h-[44px] inline-flex items-center justify-center px-6 py-3 bg-white text-primary border-2 border-primary rounded-lg hover:bg-primary/5 transition-colors font-medium"
             >
               Iniciar Sesión
             </Link>

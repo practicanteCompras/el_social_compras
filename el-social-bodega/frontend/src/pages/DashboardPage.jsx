@@ -42,7 +42,7 @@ export default function DashboardPage() {
           api.get('/dashboard/movement-history?period_months=6', { timeout: DASHBOARD_REQUEST_TIMEOUT_MS }),
           api.get('/dashboard/savings-history', { timeout: DASHBOARD_REQUEST_TIMEOUT_MS }),
           api.get('/alerts/low-stock', { timeout: DASHBOARD_REQUEST_TIMEOUT_MS }),
-          api.get('/orders?status=sent', { timeout: DASHBOARD_REQUEST_TIMEOUT_MS }),
+          api.get('/orders/?status=sent', { timeout: DASHBOARD_REQUEST_TIMEOUT_MS }),
           api.get('/products', { timeout: DASHBOARD_REQUEST_TIMEOUT_MS }),
         ])
 
@@ -148,8 +148,8 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <h1 className="text-2xl font-bold text-gray-800 mb-6">
+    <div className="p-4 sm:p-6 max-w-7xl mx-auto">
+      <h1 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6">
         {LABELS.dashboard.title}
       </h1>
 
@@ -203,9 +203,9 @@ export default function DashboardPage() {
 
       {/* Charts row 1 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <div className="bg-white rounded-xl shadow-md p-6 border border-gray-100">
+        <div className="bg-white rounded-xl shadow-md p-4 sm:p-6 border border-gray-100">
           <h2 className="text-lg font-semibold text-gray-800 mb-4">{LABELS.dashboard.stockSummary}</h2>
-          <div className="h-64">
+          <div className="h-56 sm:h-64 min-w-0">
             {stockSummary.length ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={stockSummary}>
@@ -224,9 +224,9 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl shadow-md p-6 border border-gray-100">
+        <div className="bg-white rounded-xl shadow-md p-4 sm:p-6 border border-gray-100">
           <h2 className="text-lg font-semibold text-gray-800 mb-4">{LABELS.dashboard.movementHistory}</h2>
-          <div className="h-64">
+          <div className="h-56 sm:h-64 min-w-0">
             {movementHistory.length ? (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={movementHistory}>
@@ -250,7 +250,7 @@ export default function DashboardPage() {
 
       {/* Charts row 2: Price Trends + Savings History */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <div className="bg-white rounded-xl shadow-md p-6 border border-gray-100">
+        <div className="bg-white rounded-xl shadow-md p-4 sm:p-6 border border-gray-100">
           <h2 className="text-lg font-semibold text-gray-800 mb-4">{LABELS.dashboard.priceTrends}</h2>
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-2">{LABELS.dashboard.selectProduct}</label>
@@ -267,7 +267,7 @@ export default function DashboardPage() {
               ))}
             </select>
           </div>
-          <div className="h-64">
+          <div className="h-56 sm:h-64 min-w-0">
             {selectedProductId && priceTrendsChartData.length ? (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={priceTrendsChartData}>
@@ -300,9 +300,9 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl shadow-md p-6 border border-gray-100">
+        <div className="bg-white rounded-xl shadow-md p-4 sm:p-6 border border-gray-100">
           <h2 className="text-lg font-semibold text-gray-800 mb-4">{LABELS.dashboard.savingsHistory}</h2>
-          <div className="overflow-x-auto max-h-80 overflow-y-auto">
+          <div className="overflow-x-auto overflow-y-auto max-h-80 scroll-touch">
             {savingsHistory.length ? (
               <table className="w-full text-sm">
                 <thead>

@@ -398,7 +398,7 @@ export default function ProductDetailPage() {
 
   if (loading && !product) {
     return (
-      <div className="p-6 max-w-5xl mx-auto">
+      <div className="p-4 sm:p-6 max-w-5xl mx-auto">
         <div className="h-8 w-48 bg-gray-200 rounded animate-pulse mb-6" />
         <div className="h-64 bg-gray-100 rounded-2xl animate-pulse" />
       </div>
@@ -410,7 +410,7 @@ export default function ProductDetailPage() {
   const isLowStock = (product.current_quantity ?? 0) < (product.min_stock ?? 0)
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-4 sm:p-6 max-w-5xl mx-auto">
       <Link
         to="/inventario"
         className="inline-flex items-center gap-2 text-primary hover:text-primary-dark mb-6"
