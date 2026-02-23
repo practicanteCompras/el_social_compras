@@ -21,6 +21,21 @@ def get_suppliers(
     return response.data or []
 
 
+def get_supplier_categories() -> List[str]:
+    """Return distinct supplier category names for dropdown/autocomplete, sorted alphabetically."""
+    client = get_supabase_admin()
+    response = client.table("suppliers").select("category").execute()
+    rows = response.data or []
+    categories = sorted(
+        {
+            str(r["category"]).strip()
+            for r in rows
+            if r.get("category") is not None and str(r.get("category")).strip()
+        }
+    )
+    return list(categories)
+
+
 def get_supplier(supplier_id: int) -> dict[str, Any]:
     """Select supplier by id. Raise ValueError if not found."""
     client = get_supabase_admin()

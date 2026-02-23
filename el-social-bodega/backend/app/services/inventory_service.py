@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Optional, List, Any
 from app.db.client import get_supabase_admin
 from app.models.inventory import MovementType
+import re
 
 
 def _get_next_product_code() -> str:
@@ -315,8 +316,9 @@ def get_price_history(product_id: int, months: int = 12) -> List[dict[str, Any]]
 
 
 def get_price_comparison(product_id: int) -> List[dict[str, Any]]:
-    """For each linked supplier, get latest price from price_history, compute variation
-    vs previous month, flag the lowest as is_best_price.
+    """For each linked supplier, get latest price from price_history.
+    Variation is automatic vs previous price (previous month); 0 when it's the first price.
+    Best price = lowest current price among suppliers (is_best_price).
     Uses 2 batch queries instead of N+1 per supplier (Issue #5).
     """
     client = get_supabase_admin()
@@ -355,6 +357,64 @@ def get_price_comparison(product_id: int) -> List[dict[str, Any]]:
         .execute()
     ).data or []
 
+    def _parse_price_value(value: Any) -> Optional[float]:
+        """Parse prices coming as numeric or localized strings into float."""
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            raw = value.strip()
+            if not raw:
+                return None
+
+            # Keep digits and separators only (supports values like "$ 13.000").
+            cleaned = re.sub(r"[^0-9,.\-]", "", raw)
+            if not cleaned:
+                return None
+
+            # When both separators exist, assume the rightmost one is decimal.
+            if "," in cleaned and "." in cleaned:
+                last_comma = cleaned.rfind(",")
+                last_dot = cleaned.rfind(".")
+                decimal_sep = "," if last_comma > last_dot else "."
+                thousands_sep = "." if decimal_sep == "," else ","
+                normalized = cleaned.replace(thousands_sep, "").replace(decimal_sep, ".")
+                try:
+                    return float(normalized)
+                except ValueError:
+                    return None
+
+            # Single separator case: detect common thousands formatting.
+            if "." in cleaned:
+                parts = cleaned.split(".")
+                if len(parts) == 2 and len(parts[1]) == 3:
+                    # Example: "13.000" -> 13000
+                    cleaned = cleaned.replace(".", "")
+                try:
+                    return float(cleaned)
+                except ValueError:
+                    return None
+
+            if "," in cleaned:
+                parts = cleaned.split(",")
+                if len(parts) == 2 and len(parts[1]) == 3:
+                    # Example: "13,000" -> 13000
+                    cleaned = cleaned.replace(",", "")
+                else:
+                    # Example: "15,8" -> 15.8
+                    cleaned = cleaned.replace(",", ".")
+                try:
+                    return float(cleaned)
+                except ValueError:
+                    return None
+
+            try:
+                return float(cleaned)
+            except ValueError:
+                return None
+        return None
+
     # Group history rows by supplier — take first two per supplier (newest first)
     hist_by_sid: dict[int, list] = {}
     for row in hist_resp:
@@ -368,13 +428,17 @@ def get_price_comparison(product_id: int) -> List[dict[str, Any]]:
     for sid in supplier_ids:
         slot = slot_by_sid[sid]
         hist = hist_by_sid.get(sid, [])
-        current_price = hist[0]["price"] if hist else None
-        previous_price = hist[1]["price"] if len(hist) > 1 else None
+        current_price = _parse_price_value(hist[0]["price"]) if hist else None
+        previous_price = _parse_price_value(hist[1]["price"]) if len(hist) > 1 else None
         supplier_name = name_by_sid.get(sid, "")
 
+        # Automatic variation vs previous price; 0 when it's the first price (no previous).
         variation_pct = None
-        if current_price is not None and previous_price is not None and previous_price > 0:
-            variation_pct = ((current_price - previous_price) / previous_price) * 100
+        if current_price is not None:
+            if previous_price is not None and previous_price > 0:
+                variation_pct = ((current_price - previous_price) / previous_price) * 100
+            else:
+                variation_pct = 0.0  # First price for this supplier: no previous to compare.
 
         results.append(
             {
@@ -388,7 +452,24 @@ def get_price_comparison(product_id: int) -> List[dict[str, Any]]:
             }
         )
 
-    # Flag the lowest current price
+    # Normalize mixed scales when legacy/imported data stores some prices in "thousands shorthand".
+    # Example: [13000, 15.8, 15.5] should be interpreted as [13000, 15800, 15500].
+    numeric_prices = [r["current_price"] for r in results if r["current_price"] is not None]
+    has_large_price = any(p >= 1000 for p in numeric_prices)
+    has_k_shorthand = any(0 < p < 100 for p in numeric_prices)
+    if has_large_price and has_k_shorthand:
+        for r in results:
+            if r["current_price"] is not None and 0 < r["current_price"] < 100:
+                r["current_price"] = r["current_price"] * 1000
+            if r["previous_price"] is not None and 0 < r["previous_price"] < 100:
+                r["previous_price"] = r["previous_price"] * 1000
+            if r["current_price"] is not None:
+                if r["previous_price"] is not None and r["previous_price"] > 0:
+                    r["variation_pct"] = ((r["current_price"] - r["previous_price"]) / r["previous_price"]) * 100
+                else:
+                    r["variation_pct"] = 0.0
+
+    # Best price = lowest current price (best for the buyer).
     valid = [r for r in results if r["current_price"] is not None]
     if valid:
         min_price = min(r["current_price"] for r in valid)

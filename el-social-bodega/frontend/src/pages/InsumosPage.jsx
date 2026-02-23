@@ -4,9 +4,12 @@ import api from '../services/api'
 import { useAuth } from '../context/AuthContext'
 import { LABELS } from '../utils/labels'
 
-function getCurrentPeriod() {
+function getCurrentDateString() {
   const now = new Date()
-  return { month: now.getMonth() + 1, year: now.getFullYear() }
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, '0')
+  const d = String(now.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
 }
 
 function formatCurrency(value) {
@@ -35,12 +38,10 @@ export default function InsumosPage() {
     unit: '',
     min_stock: '',
   })
-  const period = getCurrentPeriod()
   const [priceForm, setPriceForm] = useState({
     supplier_id: '',
     price: '',
-    recorded_month: period.month,
-    recorded_year: period.year,
+    recorded_date: getCurrentDateString(),
   })
   const [showAddModal, setShowAddModal] = useState(false)
   const [createForm, setCreateForm] = useState({
@@ -258,12 +259,15 @@ export default function InsumosPage() {
 
   const savePrice = async () => {
     if (!selectedProduct || !priceForm.supplier_id || !priceForm.price) return
+    const d = priceForm.recorded_date ? new Date(priceForm.recorded_date) : new Date()
+    const recorded_month = d.getMonth() + 1
+    const recorded_year = d.getFullYear()
     try {
       await api.post(`/products/${selectedProduct.id}/prices`, {
         supplier_id: Number(priceForm.supplier_id),
         price: Number(priceForm.price),
-        recorded_month: Number(priceForm.recorded_month),
-        recorded_year: Number(priceForm.recorded_year),
+        recorded_month,
+        recorded_year,
       })
       toast.success('Precio registrado')
       fetchProductDetail(selectedProduct.id)
@@ -551,20 +555,30 @@ export default function InsumosPage() {
                     </thead>
                     <tbody className="divide-y divide-gray-200">
                       {comparison.map((item) => (
-                        <tr key={item.supplier_id}>
+                        <tr key={item.supplier_id} className={item.is_best_price ? 'bg-green-50' : ''}>
                           <td className="px-3 py-2 text-sm">{item.supplier_name}</td>
-                          <td className="px-3 py-2 text-sm">{formatCurrency(item.current_price)}</td>
+                          <td className={`px-3 py-2 text-sm font-medium ${item.is_best_price ? 'text-green-700' : ''}`}>
+                            {formatCurrency(item.current_price)}
+                          </td>
                           <td className="px-3 py-2 text-sm">
                             {item.variation_pct == null ? '—' : `${item.variation_pct.toFixed(2)}%`}
                           </td>
-                          <td className="px-3 py-2 text-sm">{item.is_best_price ? 'Sí' : 'No'}</td>
+                          <td className="px-3 py-2 text-sm">
+                            {item.is_best_price ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-800">
+                                Mejor
+                              </span>
+                            ) : (
+                              <span className="text-gray-400">No</span>
+                            )}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
                 {isAdmin && (
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                     <select
                       value={priceForm.supplier_id}
                       onChange={(e) => setPriceForm((prev) => ({ ...prev, supplier_id: e.target.value }))}
@@ -583,18 +597,11 @@ export default function InsumosPage() {
                       className="rounded-lg border border-gray-300 px-3 py-2"
                     />
                     <input
-                      type="number"
-                      value={priceForm.recorded_month}
-                      onChange={(e) => setPriceForm((prev) => ({ ...prev, recorded_month: e.target.value }))}
-                      placeholder="Mes"
+                      type="date"
+                      value={priceForm.recorded_date}
+                      onChange={(e) => setPriceForm((prev) => ({ ...prev, recorded_date: e.target.value }))}
                       className="rounded-lg border border-gray-300 px-3 py-2"
-                    />
-                    <input
-                      type="number"
-                      value={priceForm.recorded_year}
-                      onChange={(e) => setPriceForm((prev) => ({ ...prev, recorded_year: e.target.value }))}
-                      placeholder="Año"
-                      className="rounded-lg border border-gray-300 px-3 py-2"
+                      title="Fecha (día, mes y año)"
                     />
                     <button
                       onClick={savePrice}

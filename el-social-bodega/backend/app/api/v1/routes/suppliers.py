@@ -25,6 +25,12 @@ async def list_suppliers(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
+@router.get("/categories")
+async def list_supplier_categories(current_user: dict = Depends(require_any_role)):
+    """Return distinct supplier category names for dropdown/autocomplete."""
+    return supplier_service.get_supplier_categories()
+
+
 @router.get("/{supplier_id}", response_model=SupplierResponse)
 async def get_supplier(
     supplier_id: int,

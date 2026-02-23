@@ -34,6 +34,15 @@ export default function SuppliersPage() {
 
   const [allCategories, setAllCategories] = useState([])
 
+  const fetchCategories = useCallback(async () => {
+    try {
+      const { data } = await api.get('/suppliers/categories')
+      setAllCategories(Array.isArray(data) ? data : [])
+    } catch {
+      setAllCategories([])
+    }
+  }, [])
+
   const fetchSuppliers = useCallback(async () => {
     setLoading(true)
     try {
@@ -42,10 +51,6 @@ export default function SuppliersPage() {
       if (categoryFilter) params.category = categoryFilter
       const { data } = await api.get('/suppliers', { params })
       setSuppliers(data || [])
-      if (!categoryFilter && !search.trim()) {
-        const cats = [...new Set((data || []).map((s) => s.category).filter(Boolean))].sort()
-        setAllCategories(cats)
-      }
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Error al cargar proveedores')
       setSuppliers([])
@@ -57,6 +62,10 @@ export default function SuppliersPage() {
   useEffect(() => {
     fetchSuppliers()
   }, [fetchSuppliers])
+
+  useEffect(() => {
+    fetchCategories()
+  }, [fetchCategories])
 
   const categories = categoryFilter ? [categoryFilter] : allCategories
 
@@ -121,6 +130,7 @@ export default function SuppliersPage() {
       }
       closeModal()
       fetchSuppliers()
+      fetchCategories()
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Error al guardar')
     } finally {
