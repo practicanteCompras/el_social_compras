@@ -73,6 +73,21 @@ def get_products(
     return rows
 
 
+def get_categories() -> List[str]:
+    """Return distinct product categories, sorted alphabetically."""
+    client = get_supabase_admin()
+    response = client.table("products").select("category").execute()
+    rows = response.data or []
+    categories = sorted(
+        {
+            str(r["category"]).strip()
+            for r in rows
+            if r.get("category") is not None and str(r.get("category")).strip()
+        }
+    )
+    return list(categories)
+
+
 def get_product(product_id: int) -> dict[str, Any]:
     """Get single product with current_quantity from inventory_stock."""
     client = get_supabase_admin()
@@ -565,6 +580,7 @@ def transfer_bodega_to_sede(
 ) -> dict[str, Any]:
     """Move quantity from bodega (inventory_stock) to sede (inventory_stock_sede).
     Records movement with type transfer_bodega_to_sede.
+    Rolls back bodega stock if the sede update or movement recording fails.
     """
     if quantity <= 0:
         raise ValueError("Quantity must be positive")
@@ -579,20 +595,32 @@ def transfer_bodega_to_sede(
                 f"Insufficient stock in bodega for product {product_id}: requested {quantity}"
             ) from e
         raise ValueError(f"Failed to update bodega stock: {err_msg}") from e
-    # 2. Add to sede stock
-    current_sede = _get_sede_product_quantity(sede_id, product_id)
-    upsert_sede_stock(sede_id, product_id, current_sede + quantity)
+    # 2. Add to sede stock + record movement (rollback bodega on failure)
+    try:
+        current_sede = _get_sede_product_quantity(sede_id, product_id)
+        upsert_sede_stock(sede_id, product_id, current_sede + quantity)
+    except Exception as e:
+        # Rollback: restore bodega stock
+        try:
+            client.rpc("increment_stock", {"p_id": product_id, "amount": quantity}).execute()
+        except Exception:
+            pass
+        raise ValueError(f"Failed to update sede stock (bodega rollback attempted): {e}") from e
     # 3. Record movement
-    movement_data = {
-        "product_id": product_id,
-        "movement_type": "transfer_bodega_to_sede",
-        "quantity": quantity,
-        "user_id": user_id,
-        "sede_id": sede_id,
-    }
-    mov_resp = client.table("inventory_movements").insert(movement_data).execute()
-    if not mov_resp.data or len(mov_resp.data) == 0:
-        raise ValueError("Failed to record transfer movement")
+    try:
+        movement_data = {
+            "product_id": product_id,
+            "movement_type": "transfer_bodega_to_sede",
+            "quantity": quantity,
+            "user_id": user_id,
+            "sede_id": sede_id,
+        }
+        mov_resp = client.table("inventory_movements").insert(movement_data).execute()
+        if not mov_resp.data or len(mov_resp.data) == 0:
+            raise ValueError("Empty response when recording movement")
+    except Exception as e:
+        # Stock was already moved; log but don't rollback both sides
+        raise ValueError(f"Transfer applied but failed to record movement: {e}") from e
     return mov_resp.data[0]
 
 

@@ -33,7 +33,7 @@ export default function InsumosPage() {
     name: '',
     category: '',
     unit: '',
-    min_stock: 0,
+    min_stock: '',
   })
   const period = getCurrentPeriod()
   const [priceForm, setPriceForm] = useState({
@@ -47,8 +47,8 @@ export default function InsumosPage() {
     name: '',
     category: '',
     unit: '',
-    min_stock: 0,
-    initial_quantity: 0,
+    min_stock: '',
+    initial_quantity: '',
     initial_stock_location: 'all_sedes',
     initial_sede_id: '',
   })
@@ -58,6 +58,16 @@ export default function InsumosPage() {
   const [selectedSedeStockQty, setSelectedSedeStockQty] = useState(0)
   const [loadingSelectedSedeStock, setLoadingSelectedSedeStock] = useState(false)
   const [movingAllStock, setMovingAllStock] = useState('')
+  const [categories, setCategories] = useState([])
+
+  const fetchCategories = async () => {
+    try {
+      const { data } = await api.get('/products/categories')
+      setCategories(Array.isArray(data) ? data : [])
+    } catch {
+      setCategories([])
+    }
+  }
 
   const fetchProducts = async () => {
     setLoading(true)
@@ -119,6 +129,7 @@ export default function InsumosPage() {
   useEffect(() => {
     fetchProducts()
     fetchSuppliers()
+    fetchCategories()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search])
 
@@ -292,12 +303,13 @@ export default function InsumosPage() {
         name: '',
         category: '',
         unit: '',
-        min_stock: 0,
-        initial_quantity: 0,
+        min_stock: '',
+        initial_quantity: '',
         initial_stock_location: 'all_sedes',
         initial_sede_id: '',
       })
       await fetchProducts()
+      fetchCategories()
       setSelectedProductId(data.id)
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Error al crear insumo')
@@ -308,6 +320,11 @@ export default function InsumosPage() {
 
   return (
     <div className="p-4 sm:p-6">
+      <datalist id="category-options">
+        {categories.map((c) => (
+          <option key={c} value={c} />
+        ))}
+      </datalist>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4 sm:mb-6">
         <h1 className="text-2xl font-bold text-gray-800">{LABELS.supplies.title}</h1>
         {isAdmin && (
@@ -381,6 +398,7 @@ export default function InsumosPage() {
                     placeholder="Nombre"
                   />
                   <input
+                    list="category-options"
                     value={editForm.category}
                     onChange={(e) => setEditForm((prev) => ({ ...prev, category: e.target.value }))}
                     readOnly={!isAdmin}
@@ -604,6 +622,7 @@ export default function InsumosPage() {
                 className="w-full rounded-lg border border-gray-300 px-3 py-2"
               />
               <input
+                list="category-options"
                 value={createForm.category}
                 onChange={(e) => setCreateForm((prev) => ({ ...prev, category: e.target.value }))}
                 placeholder="Categoría"

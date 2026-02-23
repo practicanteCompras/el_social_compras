@@ -43,6 +43,12 @@ async def list_products(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
+@router.get("/products/categories")
+async def list_categories(current_user: dict = Depends(require_any_role)):
+    """Return distinct product category names for autocomplete."""
+    return inventory_service.get_categories()
+
+
 @router.get("/products/{product_id}", response_model=ProductResponse)
 async def get_product(
     product_id: int,
@@ -293,3 +299,8 @@ def create_transfer(
         return MovementResponse(**data)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Transfer failed unexpectedly: {e}",
+        )

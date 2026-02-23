@@ -1,8 +1,13 @@
-from fastapi import FastAPI
+import logging
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
 from app.api.v1.routes import auth, suppliers, inventory, orders, dashboard, notifications, data_import
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
@@ -19,6 +24,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch-all so unhandled errors still return a proper JSON response
+    that goes through CORSMiddleware (prevents bare 500 with no CORS headers)."""
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
 app.include_router(suppliers.router, prefix="/api/v1/suppliers", tags=["Suppliers"])
