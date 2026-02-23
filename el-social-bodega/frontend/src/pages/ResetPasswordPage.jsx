@@ -49,8 +49,8 @@ export default function ResetPasswordPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100 px-4">
-      <div className="w-full max-w-md bg-white rounded-lg shadow-lg p-8">
+    <div className="min-h-screen flex items-center justify-center bg-gray-100 px-4 py-6">
+      <div className="w-full max-w-md bg-white rounded-xl shadow-lg p-6 sm:p-8">
         <div className="flex justify-center mb-6">
           <img src="/logo.png" alt="El Social" className="h-14 w-auto object-contain" />
         </div>
@@ -94,7 +94,7 @@ export default function ResetPasswordPage() {
               <button
                 type="submit"
                 disabled={submitting}
-                className="w-full py-2 px-4 bg-primary text-white rounded-md hover:bg-primary-dark disabled:opacity-50"
+                className="w-full min-h-[44px] py-3 px-4 bg-primary text-white rounded-lg hover:bg-primary-dark disabled:opacity-50 font-medium"
               >
                 {submitting ? LABELS.common.loading : LABELS.auth.setNewPassword}
               </button>
