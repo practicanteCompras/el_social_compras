@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { Navigate, useLocation } from 'react-router-dom'
 import { supabase, clearSupabaseAuthStorage, hasExpiredSessionInStorage } from '../services/supabase'
-import api from '../services/api'
+import api, { setApiAccessToken } from '../services/api'
 
 const AuthContext = createContext(null)
 
@@ -76,13 +76,14 @@ export function AuthProvider({ children }) {
         if (!mounted) return
 
         setSession(initialSession)
+        setApiAccessToken(initialSession?.access_token)
         await fetchUserProfile(initialSession)
       } catch (err) {
         if (err.message?.includes('timed out')) {
           console.warn('Auth init: getSession timed out — clearing stale session/cache')
-          // Clear localStorage synchronously so next load doesn't retry with same stale tokens
           clearSupabaseAuthStorage()
-          supabase.auth.signOut({ scope: 'local' }).catch(() => {})
+          setApiAccessToken(null)
+          supabase.auth.signOut({ scope: 'local' }).catch(() => { })
           if (mounted) setSessionClearedReason(SESSION_CLEARED_MESSAGE)
         } else {
           console.error('Auth initialization error:', err)
@@ -141,10 +142,18 @@ export function AuthProvider({ children }) {
         console.error('Supabase sign-in error:', error)
         throw error
       }
-      // Update state immediately so redirects see the user (don't wait for onAuthStateChange)
       setSession(data.session)
       setUser(data.user)
       setSessionClearedReason(null)
+      setApiAccessToken(data.session?.access_token)
+
+      try {
+        const profileResp = await api.get('/auth/me')
+        setUser(profileResp.data)
+      } catch {
+        // Backend unavailable — user_metadata.role fallback handles this
+      }
+
       return data
     } catch (err) {
       console.error('Sign-in failed:', err)
@@ -174,10 +183,10 @@ export function AuthProvider({ children }) {
           }
         }
       })
-      
+
       if (authError) {
         console.error('Supabase sign-up error:', authError)
-        
+
         // Provide user-friendly error messages
         if (authError.message?.includes('already registered') || authError.message?.includes('already exists')) {
           throw new Error('Este correo electrónico ya está registrado')
@@ -188,7 +197,7 @@ export function AuthProvider({ children }) {
         if (authError.message?.includes('email')) {
           throw new Error('Por favor ingresa un correo electrónico válido')
         }
-        
+
         throw authError
       }
 
@@ -199,7 +208,7 @@ export function AuthProvider({ children }) {
       // User profile is auto-created by database trigger (handle_new_user)
       // If we need to update role/sede_id, we can do it via backend API later
       // For now, the trigger creates a default 'user' profile
-      
+
       // Check if email confirmation is required
       // If user.session is null, email confirmation is required
       if (!authData.session) {
@@ -227,9 +236,25 @@ export function AuthProvider({ children }) {
   }
 
   const signOut = async () => {
-    await supabase.auth.signOut()
+    const signOutTimeoutMs = 5000
+
     setUser(null)
     setSession(null)
+    setSessionClearedReason(null)
+    setApiAccessToken(null)
+    clearSupabaseAuthStorage()
+
+    try {
+      await Promise.race([
+        supabase.auth.signOut({ scope: 'local' }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`supabase.signOut() timed out after ${signOutTimeoutMs}ms`)), signOutTimeoutMs)
+        ),
+      ])
+    } catch (err) {
+      // If Supabase is unreachable we still keep the user signed out locally.
+      console.warn('Sign-out fallback: local session cleared, remote sign-out failed/timed out.', err)
+    }
   }
 
   const value = {
@@ -260,22 +285,7 @@ export function useAuth() {
 
 export function ProtectedRoute({ children, allowedRoles }) {
   const { user, loading } = useAuth()
-  const navigate = useNavigate()
   const location = useLocation()
-
-  useEffect(() => {
-    if (loading) return
-    if (!user) {
-      navigate('/iniciar-sesion', { state: { from: location }, replace: true })
-      return
-    }
-    if (allowedRoles && allowedRoles.length > 0) {
-      const role = user.role || user.role_name || user.user_metadata?.role
-      if (!role || !allowedRoles.includes(role)) {
-        navigate('/dashboard', { replace: true })
-      }
-    }
-  }, [user, loading, allowedRoles, navigate, location])
 
   if (loading) {
     return (
@@ -286,7 +296,16 @@ export function ProtectedRoute({ children, allowedRoles }) {
   }
 
   if (!user) {
-    return null
+    // Not authenticated — redirect to login preserving intended destination
+    return <Navigate to="/iniciar-sesion" state={{ from: location }} replace />
+  }
+
+  if (allowedRoles && allowedRoles.length > 0) {
+    const role = user.role || user.role_name || user.user_metadata?.role
+    if (!role || !allowedRoles.includes(role)) {
+      // Authenticated but wrong role — redirect to dashboard
+      return <Navigate to="/dashboard" replace />
+    }
   }
 
   return children

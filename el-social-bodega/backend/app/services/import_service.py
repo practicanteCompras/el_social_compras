@@ -115,14 +115,23 @@ def import_products(file_bytes: bytes, filename: str) -> dict[str, Any]:
                 "min_stock": max(0, min_stock),
             }
 
-            prod_resp = client.table("products").insert(product_data).execute()
+            # Use upsert so re-importing the same file updates existing records
+            # instead of failing silently (Issue #11).
+            prod_resp = (
+                client.table("products")
+                .upsert(product_data, on_conflict="code")
+                .execute()
+            )
             if not prod_resp.data or len(prod_resp.data) == 0:
-                skipped.append({"row": int(idx) + 2, "reason": "Insert failed (duplicate code?)"})
+                skipped.append({"row": int(idx) + 2, "reason": "Upsert failed"})
                 continue
 
             product_id = prod_resp.data[0]["id"]
-            client.table("inventory_stock").insert(
-                {"product_id": product_id, "current_quantity": 0}
+            # Ensure inventory_stock row exists (no-op if already present)
+            client.table("inventory_stock").upsert(
+                {"product_id": product_id, "current_quantity": 0},
+                on_conflict="product_id",
+                ignore_duplicates=True,
             ).execute()
             imported += 1
 

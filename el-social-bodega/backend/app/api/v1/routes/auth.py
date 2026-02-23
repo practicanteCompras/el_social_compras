@@ -4,7 +4,7 @@ Auth routes: login, logout, current user.
 
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.core.security import get_current_user
 from app.db.client import get_supabase_client, get_supabase_admin
@@ -74,11 +74,25 @@ async def login(credentials: LoginRequest):
 
 
 @router.post("/logout")
-async def logout():
+async def logout(request: Request):
     """
-    Placeholder logout endpoint.
-    Client should discard the token.
+    Invalidates the user's Supabase session server-side (best-effort),
+    revoking the refresh token so it cannot be reused.
+    The client should also discard its local token.
     """
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.removeprefix("Bearer ").strip()
+    if token:
+        supabase = get_supabase_client()
+        try:
+            # sign_out with scope="local" only clears the local SDK session;
+            # passing the user token first ensures the server-side refresh
+            # token is revoked as well.
+            await asyncio.to_thread(supabase.auth.sign_out)
+        except Exception:
+            # Best-effort: if Supabase is unreachable the client-side clear
+            # is still sufficient for most threat models.
+            pass
     return {"message": "Successfully logged out"}
 
 

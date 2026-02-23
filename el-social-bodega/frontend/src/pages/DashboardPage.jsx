@@ -15,6 +15,8 @@ import { FiPackage, FiShoppingCart, FiAlertTriangle, FiDollarSign } from 'react-
 import api from '../services/api'
 import { LABELS } from '../utils/labels'
 
+const DASHBOARD_REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_DASHBOARD_TIMEOUT) || 12000
+
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [totalProducts, setTotalProducts] = useState(0)
@@ -30,52 +32,70 @@ export default function DashboardPage() {
   const [priceTrends, setPriceTrends] = useState([])
 
   useEffect(() => {
+    let mounted = true
+
     const fetchDashboardData = async () => {
-      setLoading(true)
+      if (mounted) setLoading(true)
       try {
-        const [
-          stockRes,
-          movementRes,
-          savingsRes,
-          alertsRes,
-          ordersRes,
-          productsRes,
-        ] = await Promise.all([
-          api.get('/dashboard/stock-summary'),
-          api.get('/dashboard/movement-history?period_months=6'),
-          api.get('/dashboard/savings-history'),
-          api.get('/alerts/low-stock'),
-          api.get('/orders?status=sent'),
-          api.get('/products'),
+        const requests = await Promise.allSettled([
+          api.get('/dashboard/stock-summary', { timeout: DASHBOARD_REQUEST_TIMEOUT_MS }),
+          api.get('/dashboard/movement-history?period_months=6', { timeout: DASHBOARD_REQUEST_TIMEOUT_MS }),
+          api.get('/dashboard/savings-history', { timeout: DASHBOARD_REQUEST_TIMEOUT_MS }),
+          api.get('/alerts/low-stock', { timeout: DASHBOARD_REQUEST_TIMEOUT_MS }),
+          api.get('/orders?status=sent', { timeout: DASHBOARD_REQUEST_TIMEOUT_MS }),
+          api.get('/products', { timeout: DASHBOARD_REQUEST_TIMEOUT_MS }),
         ])
 
-        setStockSummary(stockRes.data || [])
-        setMovementHistory(movementRes.data || [])
-        setSavingsHistory(savingsRes.data || [])
-        setLowStockAlerts(alertsRes.data || [])
-        setPendingOrders(Array.isArray(ordersRes.data) ? ordersRes.data.length : ordersRes.data?.count ?? 0)
+        const getData = (result, fallback, label) => {
+          if (result.status === 'fulfilled') return result.value.data
+          console.error(`Dashboard request failed (${label}):`, result.reason)
+          return fallback
+        }
 
-        const productsList = Array.isArray(productsRes.data)
-          ? productsRes.data
-          : productsRes.data?.items || productsRes.data?.data || []
+        const stockData = getData(requests[0], [], 'stock-summary')
+        const movementData = getData(requests[1], [], 'movement-history')
+        const savingsData = getData(requests[2], [], 'savings-history')
+        const alertsData = getData(requests[3], [], 'low-stock-alerts')
+        const ordersData = getData(requests[4], [], 'orders')
+        const productsData = getData(requests[5], [], 'products')
+
+        const productsList = Array.isArray(productsData)
+          ? productsData
+          : productsData?.items || productsData?.data || []
+        const pendingOrdersCount = Array.isArray(ordersData) ? ordersData.length : ordersData?.count ?? 0
+        const totalSavingsValue = (savingsData || []).reduce(
+          (acc, item) => acc + (Number(item.total_savings) || 0),
+          0
+        )
+
+        if (!mounted) return
+        setStockSummary(stockData || [])
+        setMovementHistory(movementData || [])
+        setSavingsHistory(savingsData || [])
+        setLowStockAlerts(alertsData || [])
+        setPendingOrders(pendingOrdersCount)
         setProducts(productsList)
         setTotalProducts(productsList.length)
-        setLowStockCount((alertsRes.data || []).length)
-        const savings = (savingsRes.data || []).reduce((acc, item) => acc + (Number(item.total_savings) || 0), 0)
-        setTotalSavings(savings)
+        setLowStockCount((alertsData || []).length)
+        setTotalSavings(totalSavingsValue)
       } catch (err) {
         console.error('Dashboard fetch error:', err)
+        if (!mounted) return
         setStockSummary([])
         setMovementHistory([])
         setSavingsHistory([])
         setLowStockAlerts([])
         setProducts([])
       } finally {
-        setLoading(false)
+        if (mounted) setLoading(false)
       }
     }
 
     fetchDashboardData()
+
+    return () => {
+      mounted = false
+    }
   }, [])
 
   useEffect(() => {

@@ -37,7 +37,10 @@ export default function LoginPage() {
         >
           ← Volver al inicio
         </button>
-        <h1 className="text-2xl font-bold text-primary mb-6 text-center">
+        <div className="flex justify-center mb-6">
+          <img src="/logo.png" alt="El Social" className="h-14 w-auto object-contain" />
+        </div>
+        <h1 className="text-2xl font-bold text-primary mb-6 text-center font-brand">
           {LABELS.auth.login}
         </h1>
         {sessionClearedReason && (

@@ -10,6 +10,8 @@ from app.models.orders import (
     OrderCreate,
     OrderItemCreate,
     OrderItemUpdate,
+    OrderItemResponse,
+    OrderResponse,
     StatusUpdate,
 )
 import app.services.order_service as order_service
@@ -18,7 +20,7 @@ import app.services.pdf_service as pdf_service
 router = APIRouter()
 
 
-@router.post("/")
+@router.post("/", response_model=OrderResponse)
 async def create_order(
     body: OrderCreate,
     current_user: dict = Depends(require_user_or_admin),
@@ -33,7 +35,7 @@ async def create_order(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-@router.get("/")
+@router.get("/", response_model=list[OrderResponse])
 async def list_orders(
     sede_id: int | None = Query(None),
     order_status: str | None = Query(None, alias="status"),
@@ -46,7 +48,7 @@ async def list_orders(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-@router.get("/{order_id}")
+@router.get("/{order_id}", response_model=OrderResponse)
 async def get_order(
     order_id: int,
     current_user: dict = Depends(require_any_role),
@@ -58,7 +60,7 @@ async def get_order(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
-@router.post("/{order_id}/items")
+@router.post("/{order_id}/items", response_model=OrderItemResponse)
 async def add_order_item(
     order_id: int,
     body: OrderItemCreate,
@@ -75,7 +77,7 @@ async def add_order_item(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-@router.put("/{order_id}/items/{item_id}")
+@router.put("/{order_id}/items/{item_id}", response_model=OrderItemResponse)
 async def update_order_item(
     order_id: int,
     item_id: int,
@@ -104,7 +106,7 @@ async def delete_order_item(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
-@router.patch("/{order_id}/status")
+@router.patch("/{order_id}/status", response_model=OrderResponse)
 async def update_order_status(
     order_id: int,
     body: StatusUpdate,

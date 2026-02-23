@@ -259,6 +259,18 @@ All role checks across the frontend (`Layout.jsx`, `ProtectedRoute`, etc.) must 
 const role = user?.role || user?.role_name || user?.user_metadata?.role
 ```
 
+### Supabase JWT Algorithm: ES256 (not HS256)
+
+As of 2026-02, this Supabase project signs auth JWTs with **ES256** (ECDSA P-256), not HS256. The backend's `get_current_user` reads the `alg` header from each token and:
+- **ES256**: fetches the public JWKS from `{SUPABASE_URL}/auth/v1/.well-known/jwks.json` (cached 1 hour), matches by `kid`, and verifies with the EC public key.
+- **HS256**: falls back to the `JWT_SECRET` env var (legacy/manual tokens).
+
+The `JWT_SECRET` in `backend/.env` is still used for HS256 fallback but is **not** needed for normal Supabase-issued tokens. Do **not** change the verification back to HS256-only.
+
+### Axios Token Caching
+
+The frontend's `api.js` does **not** call `supabase.auth.getSession()` on every request. Instead it caches the access token in a module-level variable, synced via `onAuthStateChange` and `setApiAccessToken()` from `AuthContext`. This avoids hangs when Supabase needs to refresh an expired token but is unreachable.
+
 ### Error Boundary
 
 Currently there is no React error boundary wrapping `<App />`. Any unhandled runtime error in a page component will crash the whole app silently in production. Add one before the first production deployment.

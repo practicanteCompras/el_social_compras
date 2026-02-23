@@ -72,8 +72,9 @@ export function hasExpiredSessionInStorage() {
     const payload = JSON.parse(atob(token.split('.')[1]))
     const exp = payload?.exp
     if (typeof exp !== 'number') return false
-    // Consider expired 60s before actual exp to avoid edge cases
-    return exp < Math.floor(Date.now() / 1000) + 60
+    // Consider expired 10s before actual exp to avoid edge cases (but not so
+    // far in advance that we clear a session Supabase would still refresh)
+    return exp < Math.floor(Date.now() / 1000) + 10
   } catch (_) {
     return false
   }

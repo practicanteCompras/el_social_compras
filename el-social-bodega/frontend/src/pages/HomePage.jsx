@@ -49,10 +49,7 @@ export default function HomePage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
-                <FiPackage className="w-6 h-6 text-white" />
-              </div>
-              <h1 className="text-2xl font-bold text-gray-900">El Social Bodega</h1>
+              <img src="/logo.png" alt="El Social" className="h-10 w-auto object-contain" />
             </div>
             <div className="flex items-center gap-4">
               <Link
@@ -75,7 +72,7 @@ export default function HomePage() {
       {/* Hero Section */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <div className="text-center mb-16">
-          <h2 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
+          <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold text-gray-900 mb-4 font-brand">
             Sistema de Gestión de Bodega
           </h2>
           <p className="text-xl text-gray-600 max-w-2xl mx-auto mb-8">

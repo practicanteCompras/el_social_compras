@@ -113,7 +113,10 @@ def get_price_trends(product_id: int, months: int = 12) -> List[dict[str, Any]]:
 
 
 def get_savings_history() -> List[dict[str, Any]]:
-    """Compute savings from approved/dispatched/delivered orders."""
+    """Compute savings from approved/dispatched/delivered orders.
+    Builds a product→best_price cache once before iterating to avoid
+    O(orders × items × suppliers) DB queries (Issue #6).
+    """
     client = get_supabase_admin()
     response = (
         client.table("orders")
@@ -123,8 +126,25 @@ def get_savings_history() -> List[dict[str, Any]]:
         .execute()
     )
 
+    # Collect all distinct product IDs across all orders first
+    all_product_ids: set[int] = set()
+    orders_data = response.data or []
+    for order in orders_data:
+        items = order.get("order_items", [])
+        if isinstance(items, dict):
+            items = [items]
+        for it in items:
+            pid = it.get("product_id")
+            if pid is not None:
+                all_product_ids.add(pid)
+
+    # Build product → best_supplier cache in one pass (avoids per-item DB calls)
+    best_cache: dict[int, Any] = {}
+    for pid in all_product_ids:
+        best_cache[pid] = get_best_supplier_for_product(pid)
+
     history = []
-    for order in response.data or []:
+    for order in orders_data:
         items = order.get("order_items", [])
         if isinstance(items, dict):
             items = [items]
@@ -136,7 +156,8 @@ def get_savings_history() -> List[dict[str, Any]]:
             for it in items
         ]
 
-        savings = compute_order_savings(order_items)
+        # compute_order_savings_from_cache avoids repeated lookups
+        savings = _compute_savings_from_cache(order_items, best_cache)
         history.append(
             {
                 "order_id": order["id"],
@@ -148,3 +169,49 @@ def get_savings_history() -> List[dict[str, Any]]:
         )
 
     return history
+
+
+def _compute_savings_from_cache(
+    order_items: List[dict[str, Any]],
+    best_cache: dict[int, Any],
+) -> dict[str, Any]:
+    """Compute savings for a list of order items using a pre-built best_cache dict
+    (product_id → best supplier data) to avoid redundant DB calls.
+    """
+    per_item = []
+    total_savings = 0.0
+
+    for item in order_items:
+        product_id = item.get("product_id")
+        quantity = item.get("quantity_requested", item.get("quantity", 0))
+        best = best_cache.get(product_id) if product_id is not None else None
+
+        if not best:
+            per_item.append(
+                {
+                    "product_id": product_id,
+                    "suggested_supplier_id": None,
+                    "suggested_price": None,
+                    "highest_price": None,
+                    "savings": 0.0,
+                }
+            )
+            continue
+
+        highest = best.get("highest_price") or best["price"]
+        lowest = best["price"]
+        savings = (highest - lowest) * quantity
+        total_savings += savings
+
+        per_item.append(
+            {
+                "product_id": product_id,
+                "suggested_supplier_id": best["supplier_id"],
+                "suggested_supplier_name": best["supplier_name"],
+                "suggested_price": best["price"],
+                "highest_price": highest,
+                "savings": savings,
+            }
+        )
+
+    return {"per_item": per_item, "total_savings": total_savings}

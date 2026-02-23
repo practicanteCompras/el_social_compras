@@ -3,10 +3,12 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   FiArrowLeft,
   FiPlus,
+  FiEdit,
   FiTrash2,
   FiAlertTriangle,
 } from 'react-icons/fi'
 import api from '../services/api'
+import ProductFormModal from '../components/ProductFormModal'
 import { useAuth } from '../context/AuthContext'
 import { LABELS } from '../utils/labels'
 import toast from 'react-hot-toast'
@@ -273,7 +275,8 @@ export default function ProductDetailPage() {
   const { productId } = useParams()
   const navigate = useNavigate()
   const { user } = useAuth()
-  const isAdmin = user?.role === 'admin'
+  const role = user?.role || user?.role_name || user?.user_metadata?.role
+  const isAdmin = role === 'admin'
 
   const [product, setProduct] = useState(null)
   const [priceComparison, setPriceComparison] = useState([])
@@ -282,6 +285,7 @@ export default function ProductDetailPage() {
   const [loading, setLoading] = useState(true)
   const [showAddPrice, setShowAddPrice] = useState(false)
   const [showLinkSupplier, setShowLinkSupplier] = useState(false)
+  const [showEditModal, setShowEditModal] = useState(false)
   const [movementForm, setMovementForm] = useState({
     movement_type: 'purchase_entry',
     quantity: '',
@@ -418,7 +422,18 @@ export default function ProductDetailPage() {
       <div className="bg-white rounded-2xl shadow-md p-6 mb-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-gray-800">{product.name}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold text-gray-800">{product.name}</h1>
+              {isAdmin && (
+                <button
+                  onClick={() => setShowEditModal(true)}
+                  className="p-2 text-primary hover:bg-primary/10 rounded-lg transition"
+                  title={LABELS.common.edit}
+                >
+                  <FiEdit size={20} />
+                </button>
+              )}
+            </div>
             <p className="text-gray-600 font-mono mt-1">{product.code}</p>
             <div className="flex flex-wrap gap-4 mt-3 text-sm">
               <span className="px-2 py-1 bg-gray-100 rounded">{product.category}</span>
@@ -675,6 +690,13 @@ export default function ProductDetailPage() {
           linkedSuppliers={priceComparison}
           allSuppliers={suppliers}
           onClose={() => setShowLinkSupplier(false)}
+          onSuccess={refreshAll}
+        />
+      )}
+      {showEditModal && (
+        <ProductFormModal
+          product={product}
+          onClose={() => setShowEditModal(false)}
           onSuccess={refreshAll}
         />
       )}

@@ -40,6 +40,7 @@
 | CSV import | pandas + openpyxl | For Excel/Google Sheets data migration |
 | Frontend build tool | Vite | Fast dev server and build tool |
 | HTTP client | axios | API calls with auth interceptor and timeout |
+| JWT verification | python-jose[cryptography] + httpx | ES256 via JWKS, HS256 fallback; JWKS fetch with httpx |
 | Charts | Recharts | Dashboard visualizations |
 | File upload | react-dropzone | CSV/Excel drag-and-drop upload |
 
@@ -52,6 +53,7 @@
 - **Database**: Supabase (PostgreSQL), project `kimuncniwgbbgthjpclg`
 - **Frontend `.env`** uses `VITE_` prefix for all env vars (Vite requirement)
 - **Backend `.env`** uses plain names (`SUPABASE_URL`, `SUPABASE_KEY`, etc.)
+- **Backend `requirements.txt`** pins package versions for reproducible installs.
 
 ### Local Development — Services to Start
 
@@ -75,13 +77,13 @@ npm run dev
 |---|---|---|
 | Authentication / RBAC | 🟡 In Progress | Supabase Auth + JWT middleware + role deps implemented; session init bug fixed 2026-02-20 |
 | Supplier Module | 🟡 In Progress | Full CRUD + UI scaffolded; needs end-to-end testing with live DB |
-| Inventory / Kardex | 🟡 In Progress | Product CRUD, movements, price history, alerts — scaffolded; needs DB testing |
+| Inventory / Kardex | 🟡 In Progress | Product CRUD, atomic stock RPC, batch price comparison, movements — scaffolded; needs DB testing |
 | Purchase Orders | 🟡 In Progress | Full workflow (draft→delivered), smart suggestions — scaffolded |
 | Cost Savings Report | 🟡 In Progress | PDF export via ReportLab — backend implemented, needs integration test |
 | Dashboard / Statistics | 🟡 In Progress | Recharts UI done; backend dashboard routes needed/connected |
 | Notifications System | 🟡 In Progress | In-app CRUD scaffolded; triggers not yet verified live |
 | CSV / Excel Import | 🟡 In Progress | pandas parsing + drag-and-drop UI scaffolded |
-| Database Schema | ✅ Done | Full SQL migration: 11 tables, enums, indexes, RLS policies, triggers, 7 sede seeds |
+| Database Schema | ✅ Done | Full SQL migration: 11 tables, enums, indexes, RLS policies, triggers, 7 sede seeds; migrations folder with atomic stock functions |
 
 > Status legend: ⬜ Not started | 🟡 In Progress | ✅ Done | 🔴 Blocked
 
@@ -104,6 +106,11 @@ orders              — id, sede_id, user_id, status, created_at, updated_at
 order_items         — id, order_id, product_id, quantity_requested, suggested_supplier_id, suggested_price
 notifications       — id, user_id, type, message, read, created_at
 ```
+
+### Migrations
+
+- **Folder:** `el-social-bodega/database/migrations/`
+- **001_atomic_stock_functions.sql:** Defines `decrement_stock(product_id, amount)` and `increment_stock(product_id, amount)` as `SECURITY DEFINER` functions. Must be run in the Supabase SQL editor before inventory movements use atomic updates (backend calls these via RPC).
 
 ---
 
@@ -172,6 +179,26 @@ notifications       — id, user_id, type, message, read, created_at
 **Decision:** The authentication flow is designed so the frontend renders without the backend running. Supabase handles auth directly; the backend only enriches the session with role/sede data.  
 **Reason:** Better local dev experience and resilience. The MVP can be demonstrated with just frontend + Supabase.
 
+### ADR-013: ES256 JWT Verification
+**Date:** 2026-02-22  
+**Decision:** Backend verifies JWT signatures using JWKS for ES256 (Supabase default) and JWT_SECRET for HS256 fallback.  
+**Reason:** Supabase projects now sign with ES256; unverified decode is insecure.
+
+### ADR-014: Axios Token Caching
+**Date:** 2026-02-22  
+**Decision:** Frontend caches access token in module-level variable, synced via `onAuthStateChange` and `setApiAccessToken()`. Request interceptor does not call `getSession()` on every request.  
+**Reason:** `getSession()` can hang when token is expired and Supabase is unreachable (refresh attempt blocks).
+
+### ADR-015: Atomic Stock Updates via RPC
+**Date:** 2026-02-22  
+**Decision:** Inventory movements use Postgres `decrement_stock` / `increment_stock` RPC functions instead of read-then-update.  
+**Reason:** Prevents race conditions when multiple requests modify stock concurrently.
+
+### ADR-016: Order Status Conditional UPDATE
+**Date:** 2026-02-22  
+**Decision:** `update_order_status` uses `WHERE status = current` in the UPDATE to prevent double-transitions.  
+**Reason:** Two concurrent requests could both read "sent" and both transition to "in_review".
+
 ---
 
 ## Bugs Fixed
@@ -198,12 +225,13 @@ notifications       — id, user_id, type, message, read, created_at
 
 - [ ] Backend `/auth/me` endpoint needs to return `role` and `sede_id` flat from the `profiles` table — verify field names match what the frontend expects.
 - [ ] `ProtectedRoute` role check uses `user.role || user.role_name` — standardize to one field once `/auth/me` response shape is confirmed.
-- [ ] `signOut` in `api.js` response interceptor uses `window.location.href` redirect — this bypasses React Router state cleanup. Consider storing a `navigate` ref or using a custom event.
 - [ ] No React error boundary wrapping `<App />` — a runtime error in any page will crash the whole app silently in production.
 - [ ] `Layout.jsx` checks `user?.role` and `user?.role_name` — standardize once `/auth/me` shape is confirmed.
 - [ ] Dashboard makes 6 concurrent API calls on mount — if the backend is down, charts are empty with no user-facing explanation. Add a fallback message.
 - [ ] `signUp` requires the `handle_new_user` DB trigger to be active in Supabase to auto-create the user profile row.
 - [ ] Supabase RLS policies currently open for dev — must be tightened before production deployment.
+- [ ] Migration `001_atomic_stock_functions.sql` must be run in the Supabase SQL editor before inventory movements use atomic stock updates.
+- [ ] `JWT_SECRET` in `backend/.env` is optional for ES256-only setups; still used for HS256 fallback.
 
 ---
 
@@ -239,6 +267,28 @@ notifications       — id, user_id, type, message, read, created_at
 - Fixed login form stuck on "Cargando..." (BUG-003): added 12 s timeout around `signInWithPassword` so the button recovers with an error message if Supabase does not respond.
 - After successful sign-in, set `session` and `user` in AuthContext immediately so redirect to dashboard works without waiting for `onAuthStateChange`. Role checks now include `user_metadata?.role` in ProtectedRoute and Layout.
 
+### [v1.0.4] — 2026-02-22 — Rebrand: Logo, Color, Font, Responsive Layout
+- **Logo:** El Social logo image added to `frontend/public/logo.png` (from project assets). Used as favicon and in Layout sidebar, HomePage header, and LoginPage above the form.
+- **Primary color:** Replaced green (`#1B5E20`) with brand red in `tailwind.config.js` — primary `#bd1826`, light `#d42a38`, dark `#8f1019`. Secondary (orange) unchanged.
+- **Fonts:** Google Fonts Lobster (brand/headings) and Inter (body). Added in `index.html` and `tailwind.config.js` (`fontFamily.brand`, `fontFamily.sans`). Body font set to Inter in `index.css`.
+- **Responsive layout:** `Layout.jsx` refactored for mobile: sidebar is a slide-out drawer on small screens, hidden by default; hamburger (FiMenu) in header toggles it; overlay backdrop when open; sidebar closes on nav link click or overlay click. Desktop (md+) keeps permanent sidebar. Logo shown in mobile header when sidebar is closed.
+- **Files changed:** `frontend/public/logo.png` (new), `frontend/index.html` (favicon, Google Fonts), `tailwind.config.js` (primary colors, fontFamily), `src/index.css` (Inter), `src/components/Layout.jsx` (logo, sidebar state, hamburger, overlay), `src/pages/HomePage.jsx` (logo in header, `font-brand` on hero), `src/pages/LoginPage.jsx` (logo above form, `font-brand` on title).
+
+### [v1.0.5] — 2026-02-22 — Security, Performance, Auth & Atomic Operations
+- **Backend — Security:** Full JWT signature verification in `security.py`: ES256 via JWKS from `{SUPABASE_URL}/auth/v1/.well-known/jwks.json` (cached 1 h), HS256 fallback with JWT_SECRET. See ADR-013.
+- **Backend — DB client:** `get_supabase_client()` and `get_supabase_admin()` use `@lru_cache(maxsize=1)` (singleton).
+- **Backend — Auth:** `/logout` performs best-effort server-side invalidation via `supabase.auth.sign_out()`.
+- **Backend — Inventory:** Atomic stock updates via Postgres RPC `decrement_stock` / `increment_stock`; `get_price_comparison` uses batch queries (no N+1); `update_product` allows explicit `None` for nullable fields; `delete_product` raises if product not found.
+- **Backend — Dashboard:** `get_savings_history` uses product→best_price cache to avoid O(orders × items × suppliers) DB queries.
+- **Backend — Orders:** `update_order_status` uses conditional UPDATE (`WHERE status = current`) to prevent race conditions; `delete_order_item` fixed empty-response check.
+- **Backend — Import:** Product import uses upsert on `code`; inventory_stock upsert on `product_id` (re-import updates instead of failing).
+- **Backend — Main:** CORS origins trimmed/filtered (`strip`, skip empty). **Requirements:** Pinned versions for reproducibility.
+- **Database — Migrations:** New folder `el-social-bodega/database/migrations/`; `001_atomic_stock_functions.sql` defines `decrement_stock` and `increment_stock` (must be run in Supabase SQL editor).
+- **Frontend — api.js:** Token caching (module-level `cachedAccessToken`, `onAuthStateChange` + `setApiAccessToken`); request interceptor synchronous; 401 response interceptor removed. See ADR-014.
+- **Frontend — AuthContext:** Calls `setApiAccessToken()` after init and sign-in; after sign-in fetches `/auth/me` immediately; `signOut` with 5 s timeout, local clear first; `ProtectedRoute` uses `<Navigate>` (declarative, no flash).
+- **Frontend — supabase.js:** `hasExpiredSessionInStorage` threshold 60s → 10s before exp.
+- **Frontend — ProductFormModal:** Extracted from `InventoryPage.jsx` into `src/components/ProductFormModal.jsx`; InventoryPage uses the component.
+
 ---
 
 ## Cloud Deployment Checklist (for future)
@@ -247,7 +297,7 @@ notifications       — id, user_id, type, message, read, created_at
 - [ ] Update `VITE_API_URL` to the deployed backend URL (e.g., `https://el-social-api.up.railway.app/api/v1`)
 - [ ] Update `CORS_ORIGINS` in `backend/.env` to include the production frontend URL
 - [ ] Review and tighten Supabase RLS policies before going live
-- [ ] Confirm `JWT_SECRET` in `backend/.env` matches the JWT secret in Supabase project settings (Settings → API → JWT Secret)
+- [ ] Confirm `JWT_SECRET` in `backend/.env` for HS256 fallback (optional if Supabase uses ES256 only; see ADR-013)
 - [ ] Add a React error boundary around `<App />` before production
 - [ ] Standardize `user.role` field shape across frontend once `/auth/me` response is confirmed
 

@@ -1,26 +1,77 @@
 """
 Auth dependencies for FastAPI.
-Provides JWT decoding, user extraction, and role-based access control.
+Provides JWT decoding with signature verification (supports both HS256
+and ES256/JWKS for newer Supabase projects), user extraction, and
+role-based access control.
 """
 
-import base64
-import json
 import time
+import logging
+
+import httpx
+from jose import jwt, jwk, JWTError
 
 from fastapi import Depends, HTTPException, Request, status
 
+from app.core.config import get_settings
 from app.db.client import get_supabase_admin
 from app.models.auth import UserRole
+
+logger = logging.getLogger(__name__)
+
+_jwks_cache: dict | None = None
+_jwks_cache_ts: float = 0
+_JWKS_TTL_SECONDS = 3600
+
+
+def _fetch_jwks(supabase_url: str) -> list[dict]:
+    """
+    Fetches the JWKS (JSON Web Key Set) from Supabase's well-known endpoint.
+    Caches the result for _JWKS_TTL_SECONDS to avoid fetching on every request.
+    """
+    global _jwks_cache, _jwks_cache_ts
+
+    now = time.time()
+    if _jwks_cache is not None and (now - _jwks_cache_ts) < _JWKS_TTL_SECONDS:
+        return _jwks_cache
+
+    url = f"{supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
+    try:
+        resp = httpx.get(url, timeout=10)
+        resp.raise_for_status()
+        keys = resp.json().get("keys", [])
+        _jwks_cache = keys
+        _jwks_cache_ts = now
+        logger.info("Fetched %d JWKS keys from Supabase", len(keys))
+        return keys
+    except Exception as e:
+        logger.warning("Failed to fetch JWKS from %s: %s", url, e)
+        if _jwks_cache is not None:
+            return _jwks_cache
+        return []
+
+
+def _get_es256_key(kid: str, supabase_url: str):
+    """Finds the ES256 public key matching the given kid from Supabase JWKS."""
+    keys = _fetch_jwks(supabase_url)
+    for k in keys:
+        if k.get("kid") == kid:
+            return jwk.construct(k, algorithm="ES256")
+    # kid not found — force-refresh in case keys rotated
+    global _jwks_cache_ts
+    _jwks_cache_ts = 0
+    keys = _fetch_jwks(supabase_url)
+    for k in keys:
+        if k.get("kid") == kid:
+            return jwk.construct(k, algorithm="ES256")
+    return None
 
 
 def get_current_user(request: Request) -> dict:
     """
-    Extracts Bearer token from Authorization header, decodes JWT to extract user ID,
-    verifies expiration, and fetches user profile from Supabase users table.
-    Returns dict with id, email, role, sede_id.
-    
-    Note: We decode the JWT without signature verification since Supabase's JWT secret
-    is not exposed. We verify the user exists in the database and check token expiration.
+    Extracts Bearer token from Authorization header, verifies JWT signature,
+    and fetches the user profile from the Supabase users table.
+    Supports both HS256 (legacy) and ES256 (JWKS) Supabase token formats.
     """
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.lower().startswith("bearer "):
@@ -36,62 +87,54 @@ def get_current_user(request: Request) -> dict:
             detail="Missing token",
         )
 
-    # Decode JWT to extract user ID and expiration
-    # JWT format: header.payload.signature
+    settings = get_settings()
+
     try:
-        parts = token.split(".")
-        if len(parts) != 3:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token format",
-            )
-        
-        # Decode payload (add padding if needed)
-        payload_b64 = parts[1]
-        # Add padding if necessary for base64 decoding
-        padding = len(payload_b64) % 4
-        if padding:
-            payload_b64 += "=" * (4 - padding)
-        
-        payload_bytes = base64.urlsafe_b64decode(payload_b64)
-        payload = json.loads(payload_bytes)
-        
-        # Extract user ID from token
-        user_id = payload.get("sub")
-        if not user_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token payload: missing user ID",
-            )
-        
-        # Verify token expiration
-        exp = payload.get("exp")
-        if exp:
-            current_time = time.time()
-            if current_time > exp:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Token expired",
-                )
-        
-    except (ValueError, json.JSONDecodeError) as e:
+        unverified_header = jwt.get_unverified_header(token)
+    except JWTError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token format",
-        ) from e
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token validation failed",
+            detail="Malformed token header",
         ) from e
 
-    # Fetch user profile from users table
-    # This verifies the user exists and is authorized
+    alg = unverified_header.get("alg", "HS256")
+
+    try:
+        if alg == "ES256":
+            kid = unverified_header.get("kid")
+            if not kid:
+                raise JWTError("ES256 token missing kid header")
+            key = _get_es256_key(kid, settings.supabase_url)
+            if key is None:
+                raise JWTError(f"No JWKS key found for kid={kid}")
+            payload = jwt.decode(
+                token,
+                key,
+                algorithms=["ES256"],
+                options={"verify_aud": False},
+            )
+        else:
+            payload = jwt.decode(
+                token,
+                settings.jwt_secret,
+                algorithms=["HS256"],
+                options={"verify_aud": False},
+            )
+    except JWTError as e:
+        logger.warning("JWT verification failed (alg=%s): %s", alg, e)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        ) from e
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload: missing user ID",
+        )
+
     admin_client = get_supabase_admin()
-    # Avoid .single(): PostgREST raises when 0 rows are returned (PGRST116),
-    # which would otherwise bubble up as a 500 before we can handle it.
     response = (
         admin_client.table("users")
         .select("id, email, role, sede_id")
@@ -101,18 +144,23 @@ def get_current_user(request: Request) -> dict:
     )
 
     records = response.data if isinstance(response.data, list) else [response.data]
-    records = [record for record in records if record]
+    records = [r for r in records if r]
 
     if not records:
-        # Self-heal for legacy users created before the DB trigger existed.
         token_email = payload.get("email")
         if token_email:
+            raw_meta = payload.get("user_metadata") or {}
+            meta_role = raw_meta.get("role", "user")
+            if meta_role not in ("admin", "user", "reviewer"):
+                meta_role = "user"
+            meta_sede = raw_meta.get("sede_id")
+
             admin_client.table("users").insert(
                 {
                     "id": user_id,
                     "email": token_email,
-                    "role": "user",
-                    "sede_id": None,
+                    "role": meta_role,
+                    "sede_id": meta_sede,
                 }
             ).execute()
 
@@ -128,7 +176,7 @@ def get_current_user(request: Request) -> dict:
                 if isinstance(retry_response.data, list)
                 else [retry_response.data]
             )
-            retry_records = [record for record in retry_records if record]
+            retry_records = [r for r in retry_records if r]
             if retry_records:
                 records = retry_records
 

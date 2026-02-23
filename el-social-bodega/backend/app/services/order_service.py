@@ -157,7 +157,8 @@ def delete_order_item(item_id: int) -> None:
     """Delete from order_items."""
     client = get_supabase_admin()
     response = client.table("order_items").delete().eq("id", item_id).execute()
-    if response.data is None and response.count == 0:
+    # Supabase returns an empty list (not None) when no rows matched
+    if not response.data:
         raise ValueError(f"Order item with id {item_id} not found")
 
 
@@ -166,8 +167,10 @@ def update_order_status(
     new_status: str,
     user_role: str,
 ) -> dict[str, Any]:
-    """Validate transition using VALID_TRANSITIONS. Only admin can approve/reject/dispatch.
-    Raise ValueError on invalid transition.
+    """Validate transition using VALID_TRANSITIONS and apply atomically.
+    Uses a conditional UPDATE (WHERE status = current_status) to prevent race
+    conditions where two concurrent requests both read the same current status.
+    Only admin can approve/reject/dispatch. Raises ValueError on invalid transition.
     """
     admin_only_statuses = {"approved", "rejected", "dispatched"}
     if new_status in admin_only_statuses and user_role != "admin":
@@ -192,14 +195,20 @@ def update_order_status(
             f"Invalid transition from {current} to {new_status}. Allowed: {[s.value for s in allowed]}"
         )
 
+    # Conditional UPDATE: only succeeds if status is still what we read above.
+    # If another request changed it in the meantime this returns 0 rows,
+    # preventing double-transitions (race condition, Issue #4).
     response = (
         client.table("orders")
         .update({"status": new_status})
         .eq("id", order_id)
+        .eq("status", current)   # <- the race-safety guard
         .execute()
     )
     if not response.data or len(response.data) == 0:
-        raise ValueError(f"Order with id {order_id} not found")
+        raise ValueError(
+            "Order status was changed by another request. Please refresh and try again."
+        )
 
     return response.data[0]
 

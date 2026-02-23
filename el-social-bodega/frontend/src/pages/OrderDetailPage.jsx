@@ -89,8 +89,9 @@ export default function OrderDetailPage() {
   const [editingItemId, setEditingItemId] = useState(null)
   const [editQuantity, setEditQuantity] = useState('')
 
-  const isAdmin = user?.role === 'admin'
-  const canEditItems = user?.role === 'user' || user?.role === 'admin'
+  const role = user?.role || user?.role_name || user?.user_metadata?.role
+  const isAdmin = role === 'admin'
+  const canEditItems = role === 'user' || role === 'admin'
   const isDraft = order?.status === 'draft'
 
   const fetchOrder = useCallback(async () => {

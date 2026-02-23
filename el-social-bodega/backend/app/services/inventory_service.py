@@ -2,6 +2,8 @@
 
 from typing import Optional, List, Any
 from app.db.client import get_supabase_admin
+from app.models.inventory import MovementType
+
 
 
 def get_products(
@@ -84,9 +86,11 @@ def create_product(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def update_product(product_id: int, data: dict[str, Any]) -> dict[str, Any]:
-    """Update product fields."""
+    """Update product fields. Supports setting nullable fields to None."""
     client = get_supabase_admin()
-    filtered = {k: v for k, v in data.items() if v is not None and k != "current_quantity"}
+    # Only strip internal-only field; keep explicit None values so callers
+    # can intentionally clear nullable columns via PATCH.
+    filtered = {k: v for k, v in data.items() if k != "current_quantity"}
 
     if not filtered:
         return get_product(product_id)
@@ -102,6 +106,12 @@ def update_product(product_id: int, data: dict[str, Any]) -> dict[str, Any]:
 def delete_product(product_id: int) -> None:
     """Delete product and related records."""
     client = get_supabase_admin()
+
+    # Confirm product exists before cascading deletes (avoids silent no-op)
+    exists = client.table("products").select("id").eq("id", product_id).limit(1).execute()
+    if not exists.data:
+        raise ValueError(f"Product with id {product_id} not found")
+
     # Delete related records first (order of FK dependencies)
     client.table("order_items").delete().eq("product_id", product_id).execute()
     client.table("inventory_movements").delete().eq("product_id", product_id).execute()
@@ -171,8 +181,9 @@ def get_price_history(product_id: int, months: int = 12) -> List[dict[str, Any]]
 
 
 def get_price_comparison(product_id: int) -> List[dict[str, Any]]:
-    """For each linked supplier, get latest price from price_history, compute variation vs previous month,
-    flag the lowest as is_best_price. Return list of dicts.
+    """For each linked supplier, get latest price from price_history, compute variation
+    vs previous month, flag the lowest as is_best_price.
+    Uses 2 batch queries instead of N+1 per supplier (Issue #5).
     """
     client = get_supabase_admin()
     links = (
@@ -185,29 +196,47 @@ def get_price_comparison(product_id: int) -> List[dict[str, Any]]:
     if not links:
         return []
 
+    supplier_ids = [lnk["supplier_id"] for lnk in links]
+    slot_by_sid = {lnk["supplier_id"]: lnk["slot"] for lnk in links}
+
+    # Batch-fetch supplier names in one query
+    suppliers_resp = (
+        client.table("suppliers")
+        .select("id, company_name")
+        .in_("id", supplier_ids)
+        .execute()
+    ).data or []
+    name_by_sid: dict[int, str] = {s["id"]: s["company_name"] for s in suppliers_resp}
+
+    # Batch-fetch last 2 price records per supplier (ordered newest-first)
+    # We limit to 2 * len(supplier_ids) and group in Python to get
+    # current + previous price per supplier without N separate queries.
+    hist_resp = (
+        client.table("price_history")
+        .select("supplier_id, price, recorded_year, recorded_month")
+        .eq("product_id", product_id)
+        .in_("supplier_id", supplier_ids)
+        .order("recorded_year", desc=True)
+        .order("recorded_month", desc=True)
+        .execute()
+    ).data or []
+
+    # Group history rows by supplier — take first two per supplier (newest first)
+    hist_by_sid: dict[int, list] = {}
+    for row in hist_resp:
+        sid = row["supplier_id"]
+        if sid not in hist_by_sid:
+            hist_by_sid[sid] = []
+        if len(hist_by_sid[sid]) < 2:
+            hist_by_sid[sid].append(row)
+
     results = []
-
-    for link in links:
-        sid = link["supplier_id"]
-        slot = link["slot"]
-        hist = (
-            client.table("price_history")
-            .select("price, recorded_month, recorded_year")
-            .eq("product_id", product_id)
-            .eq("supplier_id", sid)
-            .order("recorded_year", desc=True)
-            .order("recorded_month", desc=True)
-            .limit(2)
-            .execute()
-        ).data or []
-
+    for sid in supplier_ids:
+        slot = slot_by_sid[sid]
+        hist = hist_by_sid.get(sid, [])
         current_price = hist[0]["price"] if hist else None
         previous_price = hist[1]["price"] if len(hist) > 1 else None
-
-        supplier = (
-            client.table("suppliers").select("company_name").eq("id", sid).execute()
-        ).data
-        supplier_name = supplier[0]["company_name"] if supplier else ""
+        supplier_name = name_by_sid.get(sid, "")
 
         variation_pct = None
         if current_price is not None and previous_price is not None and previous_price > 0:
@@ -225,7 +254,7 @@ def get_price_comparison(product_id: int) -> List[dict[str, Any]]:
             }
         )
 
-    # Find min current price and set is_best_price
+    # Flag the lowest current price
     valid = [r for r in results if r["current_price"] is not None]
     if valid:
         min_price = min(r["current_price"] for r in valid)
@@ -236,9 +265,9 @@ def get_price_comparison(product_id: int) -> List[dict[str, Any]]:
 
 
 def create_movement(data: dict[str, Any], user_id: str) -> dict[str, Any]:
-    """Insert into inventory_movements, then update inventory_stock.
-    Increase for purchase_entry/adjustment, decrease for exit_by_request/loss_damage.
-    If decrease would make stock negative, raise ValueError.
+    """Insert into inventory_movements, then atomically update inventory_stock
+    via Postgres RPC (decrement_stock / increment_stock) to prevent race conditions.
+    If a decrement would make stock negative, the DB raises and we surface a 400.
     """
     client = get_supabase_admin()
     movement_type = data.get("movement_type")
@@ -248,24 +277,9 @@ def create_movement(data: dict[str, Any], user_id: str) -> dict[str, Any]:
     if quantity <= 0:
         raise ValueError("Quantity must be positive")
 
-    stock_resp = (
-        client.table("inventory_stock")
-        .select("current_quantity")
-        .eq("product_id", product_id)
-        .execute()
-    )
-    current = 0
-    if stock_resp.data and len(stock_resp.data) > 0:
-        current = stock_resp.data[0].get("current_quantity", 0)
-
-    if movement_type in ("exit_by_request", "loss_damage"):
-        if current < quantity:
-            raise ValueError(
-                f"Insufficient stock: current={current}, requested decrease={quantity}"
-            )
-        new_qty = current - quantity
-    else:
-        new_qty = current + quantity
+    # Determine direction using enum values for type safety (Issue #16)
+    exit_types = {MovementType.exit_by_request.value, MovementType.loss_damage.value}
+    is_exit = movement_type in exit_types
 
     movement_data = {
         "product_id": product_id,
@@ -279,9 +293,19 @@ def create_movement(data: dict[str, Any], user_id: str) -> dict[str, Any]:
     if not mov_resp.data or len(mov_resp.data) == 0:
         raise ValueError("Failed to create movement")
 
-    client.table("inventory_stock").update({"current_quantity": new_qty}).eq(
-        "product_id", product_id
-    ).execute()
+    # Atomic stock update via Postgres function (Issue #3)
+    # For exits: decrement_stock raises if stock is insufficient.
+    # For entries: increment_stock uses INSERT … ON CONFLICT DO UPDATE.
+    rpc_name = "decrement_stock" if is_exit else "increment_stock"
+    try:
+        client.rpc(rpc_name, {"p_id": product_id, "amount": quantity}).execute()
+    except Exception as e:
+        err_msg = str(e)
+        if "insufficient_stock" in err_msg:
+            raise ValueError(
+                f"Insufficient stock for product {product_id}: requested {quantity}"
+            ) from e
+        raise ValueError(f"Failed to update stock: {err_msg}") from e
 
     return mov_resp.data[0]
 
