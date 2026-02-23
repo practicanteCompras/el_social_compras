@@ -36,7 +36,7 @@ async def create_order(
 
 
 @router.get("/", response_model=list[OrderResponse])
-async def list_orders(
+def list_orders(
     sede_id: int | None = Query(None),
     order_status: str | None = Query(None, alias="status"),
     current_user: dict = Depends(require_any_role),

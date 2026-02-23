@@ -191,7 +191,7 @@ async def list_movements(
 
 
 @router.get("/alerts/low-stock", response_model=list[LowStockAlert])
-async def get_low_stock_alerts(
+def get_low_stock_alerts(
     current_user: dict = Depends(require_any_role),
 ):
     """Get low stock alerts."""

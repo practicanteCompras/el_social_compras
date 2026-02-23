@@ -15,7 +15,7 @@ import { FiPackage, FiShoppingCart, FiAlertTriangle, FiDollarSign } from 'react-
 import api from '../services/api'
 import { LABELS } from '../utils/labels'
 
-const DASHBOARD_REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_DASHBOARD_TIMEOUT) || 12000
+const DASHBOARD_REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_DASHBOARD_TIMEOUT) || 20000
 
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
