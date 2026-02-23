@@ -15,6 +15,8 @@ import { FiPackage, FiShoppingCart, FiAlertTriangle, FiDollarSign } from 'react-
 import api from '../services/api'
 import { LABELS } from '../utils/labels'
 
+const DASHBOARD_REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_DASHBOARD_TIMEOUT) || 20000
+
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [totalProducts, setTotalProducts] = useState(0)
@@ -30,52 +32,70 @@ export default function DashboardPage() {
   const [priceTrends, setPriceTrends] = useState([])
 
   useEffect(() => {
+    let mounted = true
+
     const fetchDashboardData = async () => {
-      setLoading(true)
+      if (mounted) setLoading(true)
       try {
-        const [
-          stockRes,
-          movementRes,
-          savingsRes,
-          alertsRes,
-          ordersRes,
-          productsRes,
-        ] = await Promise.all([
-          api.get('/dashboard/stock-summary'),
-          api.get('/dashboard/movement-history?period_months=6'),
-          api.get('/dashboard/savings-history'),
-          api.get('/alerts/low-stock'),
-          api.get('/orders?status=sent'),
-          api.get('/products'),
+        const requests = await Promise.allSettled([
+          api.get('/dashboard/stock-summary', { timeout: DASHBOARD_REQUEST_TIMEOUT_MS }),
+          api.get('/dashboard/movement-history?period_months=6', { timeout: DASHBOARD_REQUEST_TIMEOUT_MS }),
+          api.get('/dashboard/savings-history', { timeout: DASHBOARD_REQUEST_TIMEOUT_MS }),
+          api.get('/alerts/low-stock', { timeout: DASHBOARD_REQUEST_TIMEOUT_MS }),
+          api.get('/orders/?status=sent', { timeout: DASHBOARD_REQUEST_TIMEOUT_MS }),
+          api.get('/products', { timeout: DASHBOARD_REQUEST_TIMEOUT_MS }),
         ])
 
-        setStockSummary(stockRes.data || [])
-        setMovementHistory(movementRes.data || [])
-        setSavingsHistory(savingsRes.data || [])
-        setLowStockAlerts(alertsRes.data || [])
-        setPendingOrders(Array.isArray(ordersRes.data) ? ordersRes.data.length : ordersRes.data?.count ?? 0)
+        const getData = (result, fallback, label) => {
+          if (result.status === 'fulfilled') return result.value.data
+          console.error(`Dashboard request failed (${label}):`, result.reason)
+          return fallback
+        }
 
-        const productsList = Array.isArray(productsRes.data)
-          ? productsRes.data
-          : productsRes.data?.items || productsRes.data?.data || []
+        const stockData = getData(requests[0], [], 'stock-summary')
+        const movementData = getData(requests[1], [], 'movement-history')
+        const savingsData = getData(requests[2], [], 'savings-history')
+        const alertsData = getData(requests[3], [], 'low-stock-alerts')
+        const ordersData = getData(requests[4], [], 'orders')
+        const productsData = getData(requests[5], [], 'products')
+
+        const productsList = Array.isArray(productsData)
+          ? productsData
+          : productsData?.items || productsData?.data || []
+        const pendingOrdersCount = Array.isArray(ordersData) ? ordersData.length : ordersData?.count ?? 0
+        const totalSavingsValue = (savingsData || []).reduce(
+          (acc, item) => acc + (Number(item.total_savings) || 0),
+          0
+        )
+
+        if (!mounted) return
+        setStockSummary(stockData || [])
+        setMovementHistory(movementData || [])
+        setSavingsHistory(savingsData || [])
+        setLowStockAlerts(alertsData || [])
+        setPendingOrders(pendingOrdersCount)
         setProducts(productsList)
         setTotalProducts(productsList.length)
-        setLowStockCount((alertsRes.data || []).length)
-        const savings = (savingsRes.data || []).reduce((acc, item) => acc + (Number(item.total_savings) || 0), 0)
-        setTotalSavings(savings)
+        setLowStockCount((alertsData || []).length)
+        setTotalSavings(totalSavingsValue)
       } catch (err) {
         console.error('Dashboard fetch error:', err)
+        if (!mounted) return
         setStockSummary([])
         setMovementHistory([])
         setSavingsHistory([])
         setLowStockAlerts([])
         setProducts([])
       } finally {
-        setLoading(false)
+        if (mounted) setLoading(false)
       }
     }
 
     fetchDashboardData()
+
+    return () => {
+      mounted = false
+    }
   }, [])
 
   useEffect(() => {
@@ -128,8 +148,8 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <h1 className="text-2xl font-bold text-gray-800 mb-6">
+    <div className="p-4 sm:p-6 max-w-7xl mx-auto">
+      <h1 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6">
         {LABELS.dashboard.title}
       </h1>
 
@@ -183,9 +203,9 @@ export default function DashboardPage() {
 
       {/* Charts row 1 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <div className="bg-white rounded-xl shadow-md p-6 border border-gray-100">
+        <div className="bg-white rounded-xl shadow-md p-4 sm:p-6 border border-gray-100">
           <h2 className="text-lg font-semibold text-gray-800 mb-4">{LABELS.dashboard.stockSummary}</h2>
-          <div className="h-64">
+          <div className="h-56 sm:h-64 min-w-0">
             {stockSummary.length ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={stockSummary}>
@@ -204,9 +224,9 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl shadow-md p-6 border border-gray-100">
+        <div className="bg-white rounded-xl shadow-md p-4 sm:p-6 border border-gray-100">
           <h2 className="text-lg font-semibold text-gray-800 mb-4">{LABELS.dashboard.movementHistory}</h2>
-          <div className="h-64">
+          <div className="h-56 sm:h-64 min-w-0">
             {movementHistory.length ? (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={movementHistory}>
@@ -230,7 +250,7 @@ export default function DashboardPage() {
 
       {/* Charts row 2: Price Trends + Savings History */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <div className="bg-white rounded-xl shadow-md p-6 border border-gray-100">
+        <div className="bg-white rounded-xl shadow-md p-4 sm:p-6 border border-gray-100">
           <h2 className="text-lg font-semibold text-gray-800 mb-4">{LABELS.dashboard.priceTrends}</h2>
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-2">{LABELS.dashboard.selectProduct}</label>
@@ -247,7 +267,7 @@ export default function DashboardPage() {
               ))}
             </select>
           </div>
-          <div className="h-64">
+          <div className="h-56 sm:h-64 min-w-0">
             {selectedProductId && priceTrendsChartData.length ? (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={priceTrendsChartData}>
@@ -280,9 +300,9 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl shadow-md p-6 border border-gray-100">
+        <div className="bg-white rounded-xl shadow-md p-4 sm:p-6 border border-gray-100">
           <h2 className="text-lg font-semibold text-gray-800 mb-4">{LABELS.dashboard.savingsHistory}</h2>
-          <div className="overflow-x-auto max-h-80 overflow-y-auto">
+          <div className="overflow-x-auto overflow-y-auto max-h-80 scroll-touch">
             {savingsHistory.length ? (
               <table className="w-full text-sm">
                 <thead>

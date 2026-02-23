@@ -11,7 +11,7 @@ router = APIRouter()
 
 
 @router.get("/stock-summary")
-async def get_stock_summary(
+def get_stock_summary(
     current_user: dict = Depends(require_any_role),
 ):
     """Get stock summary for dashboard."""
@@ -23,7 +23,7 @@ async def get_stock_summary(
 
 
 @router.get("/movement-history")
-async def get_movement_history(
+def get_movement_history(
     period_months: int = Query(6, ge=1, le=60),
     current_user: dict = Depends(require_any_role),
 ):
@@ -36,7 +36,7 @@ async def get_movement_history(
 
 
 @router.get("/price-trends")
-async def get_price_trends(
+def get_price_trends(
     product_id: int = Query(..., description="Required product ID"),
     months: int = Query(12, ge=1, le=60),
     current_user: dict = Depends(require_any_role),
@@ -50,7 +50,7 @@ async def get_price_trends(
 
 
 @router.get("/savings-history")
-async def get_savings_history(
+def get_savings_history(
     current_user: dict = Depends(require_any_role),
 ):
     """Get savings report history."""

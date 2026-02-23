@@ -1,14 +1,23 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
-import { supabase } from '../services/supabase'
-import api from '../services/api'
+import { Navigate, useLocation } from 'react-router-dom'
+import { supabase, clearSupabaseAuthStorage, hasExpiredSessionInStorage } from '../services/supabase'
+import api, { setApiAccessToken } from '../services/api'
 
 const AuthContext = createContext(null)
+
+/** Reason shown on login when auth init cleared stale/unreachable session (e.g. timeout). */
+const SESSION_CLEARED_MESSAGE = 'Tu sesión expiró o no hay conexión. Inicia sesión de nuevo.'
+
+/** Auth init timeout: shorter in dev so slow/unreachable Supabase doesn't block for 8s. */
+const DEFAULT_AUTH_INIT_TIMEOUT_MS = import.meta.env.DEV ? 3000 : 8000
+const AUTH_INIT_TIMEOUT_MS = Number(import.meta.env.VITE_AUTH_INIT_TIMEOUT) || DEFAULT_AUTH_INIT_TIMEOUT_MS
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [session, setSession] = useState(null)
   const [loading, setLoading] = useState(true)
+  /** Set when we clear session due to getSession timeout; login page can show this once. */
+  const [sessionClearedReason, setSessionClearedReason] = useState(null)
 
   useEffect(() => {
     // Track mount state to avoid updating unmounted component (StrictMode double-invoke safe)
@@ -20,7 +29,7 @@ export function AuthProvider({ children }) {
      * (paused free-tier project, network issue, etc.), the call hangs indefinitely
      * and loading never resolves — causing a permanent "Cargando..." screen.
      */
-    const getSessionWithTimeout = (ms = 8000) =>
+    const getSessionWithTimeout = (ms = AUTH_INIT_TIMEOUT_MS) =>
       Promise.race([
         supabase.auth.getSession(),
         new Promise((_, reject) =>
@@ -49,22 +58,41 @@ export function AuthProvider({ children }) {
 
     /**
      * Initializes auth state on mount.
-     * Uses a finally block so loading ALWAYS resolves, even on network errors.
-     * The backend profile fetch is attempted but never blocks the loading state.
+     * If cache has an expired session, we clear it and skip getSession() so we never
+     * trigger a blocking token refresh. Otherwise uses getSessionWithTimeout.
      */
     const initialize = async () => {
       try {
+        if (hasExpiredSessionInStorage()) {
+          clearSupabaseAuthStorage()
+          if (mounted) {
+            setSession(null)
+            setUser(null)
+            setSessionClearedReason(SESSION_CLEARED_MESSAGE)
+          }
+          return
+        }
         const { data: { session: initialSession } } = await getSessionWithTimeout()
         if (!mounted) return
 
         setSession(initialSession)
-        // Profile fetch is best-effort and does not block the loading resolution
+        setApiAccessToken(initialSession?.access_token)
         await fetchUserProfile(initialSession)
       } catch (err) {
-        // getSession() itself can fail if Supabase is unreachable at startup
-        console.error('Auth initialization error:', err)
+        if (err.message?.includes('timed out')) {
+          console.warn('Auth init: getSession timed out — clearing stale session/cache')
+          clearSupabaseAuthStorage()
+          setApiAccessToken(null)
+          supabase.auth.signOut({ scope: 'local' }).catch(() => { })
+          if (mounted) setSessionClearedReason(SESSION_CLEARED_MESSAGE)
+        } else {
+          console.error('Auth initialization error:', err)
+        }
+        if (mounted) {
+          setSession(null)
+          setUser(null)
+        }
       } finally {
-        // Always unblock the UI regardless of what happened above
         if (mounted) setLoading(false)
       }
     }
@@ -114,9 +142,18 @@ export function AuthProvider({ children }) {
         console.error('Supabase sign-in error:', error)
         throw error
       }
-      // Update state immediately so redirects see the user (don't wait for onAuthStateChange)
       setSession(data.session)
       setUser(data.user)
+      setSessionClearedReason(null)
+      setApiAccessToken(data.session?.access_token)
+
+      try {
+        const profileResp = await api.get('/auth/me')
+        setUser(profileResp.data)
+      } catch {
+        // Backend unavailable — user_metadata.role fallback handles this
+      }
+
       return data
     } catch (err) {
       console.error('Sign-in failed:', err)
@@ -132,24 +169,25 @@ export function AuthProvider({ children }) {
     }
   }
 
-  const signUp = async (email, password, role, sedeId) => {
+  const signUp = async (email, password, role, sedeId, firstName, lastName) => {
     try {
-      // Sign up with Supabase Auth
+      // Sign up with Supabase Auth; metadata is used by handle_new_user trigger
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
         password,
         options: {
-          // Include additional metadata if needed
           data: {
             role: role || 'user',
-            sede_id: sedeId || null,
+            sede_id: sedeId ?? null,
+            first_name: firstName?.trim() || null,
+            last_name: lastName?.trim() || null,
           }
         }
       })
-      
+
       if (authError) {
         console.error('Supabase sign-up error:', authError)
-        
+
         // Provide user-friendly error messages
         if (authError.message?.includes('already registered') || authError.message?.includes('already exists')) {
           throw new Error('Este correo electrónico ya está registrado')
@@ -160,7 +198,7 @@ export function AuthProvider({ children }) {
         if (authError.message?.includes('email')) {
           throw new Error('Por favor ingresa un correo electrónico válido')
         }
-        
+
         throw authError
       }
 
@@ -171,7 +209,7 @@ export function AuthProvider({ children }) {
       // User profile is auto-created by database trigger (handle_new_user)
       // If we need to update role/sede_id, we can do it via backend API later
       // For now, the trigger creates a default 'user' profile
-      
+
       // Check if email confirmation is required
       // If user.session is null, email confirmation is required
       if (!authData.session) {
@@ -198,19 +236,44 @@ export function AuthProvider({ children }) {
     }
   }
 
+  const requestPasswordReset = async (email) => {
+    const redirectTo = `${window.location.origin}/restablecer-contrasena`
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo })
+    if (error) throw error
+  }
+
   const signOut = async () => {
-    await supabase.auth.signOut()
+    const signOutTimeoutMs = 5000
+
     setUser(null)
     setSession(null)
+    setSessionClearedReason(null)
+    setApiAccessToken(null)
+    clearSupabaseAuthStorage()
+
+    try {
+      await Promise.race([
+        supabase.auth.signOut({ scope: 'local' }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`supabase.signOut() timed out after ${signOutTimeoutMs}ms`)), signOutTimeoutMs)
+        ),
+      ])
+    } catch (err) {
+      // If Supabase is unreachable we still keep the user signed out locally.
+      console.warn('Sign-out fallback: local session cleared, remote sign-out failed/timed out.', err)
+    }
   }
 
   const value = {
     user,
     session,
     loading,
+    sessionClearedReason,
+    clearSessionClearedReason: () => setSessionClearedReason(null),
     signIn,
     signUp,
     signOut,
+    requestPasswordReset,
   }
 
   return (
@@ -230,22 +293,7 @@ export function useAuth() {
 
 export function ProtectedRoute({ children, allowedRoles }) {
   const { user, loading } = useAuth()
-  const navigate = useNavigate()
   const location = useLocation()
-
-  useEffect(() => {
-    if (loading) return
-    if (!user) {
-      navigate('/iniciar-sesion', { state: { from: location }, replace: true })
-      return
-    }
-    if (allowedRoles && allowedRoles.length > 0) {
-      const role = user.role || user.role_name || user.user_metadata?.role
-      if (!role || !allowedRoles.includes(role)) {
-        navigate('/dashboard', { replace: true })
-      }
-    }
-  }, [user, loading, allowedRoles, navigate, location])
 
   if (loading) {
     return (
@@ -256,7 +304,16 @@ export function ProtectedRoute({ children, allowedRoles }) {
   }
 
   if (!user) {
-    return null
+    // Not authenticated — redirect to login preserving intended destination
+    return <Navigate to="/iniciar-sesion" state={{ from: location }} replace />
+  }
+
+  if (allowedRoles && allowedRoles.length > 0) {
+    const role = user.role || user.role_name || user.user_metadata?.role
+    if (!role || !allowedRoles.includes(role)) {
+      // Authenticated but wrong role — redirect to dashboard
+      return <Navigate to="/dashboard" replace />
+    }
   }
 
   return children

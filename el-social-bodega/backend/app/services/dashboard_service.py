@@ -1,10 +1,8 @@
 """Dashboard service — stock summary, movement history, price trends, savings history."""
 
-from typing import List, Any
+from typing import List, Any, Optional
 from datetime import datetime, timedelta
 from app.db.client import get_supabase_admin
-
-from app.services.suggestion_service import compute_order_savings
 
 
 def get_stock_summary() -> List[dict[str, Any]]:
@@ -112,8 +110,82 @@ def get_price_trends(product_id: int, months: int = 12) -> List[dict[str, Any]]:
     return list(by_supplier.values())
 
 
+def _build_best_supplier_cache_batch(product_ids: set[int]) -> dict[int, Optional[dict[str, Any]]]:
+    """Build product_id -> best supplier (supplier_id, supplier_name, price, highest_price) with batched queries.
+    Uses 3 Supabase round-trips regardless of number of products.
+    """
+    if not product_ids:
+        return {}
+    client = get_supabase_admin()
+    pid_list = list(product_ids)
+
+    # 1. All product_suppliers links for these products
+    links_resp = (
+        client.table("product_suppliers")
+        .select("product_id, supplier_id")
+        .in_("product_id", pid_list)
+        .execute()
+    )
+    links = [(r["product_id"], r["supplier_id"]) for r in (links_resp.data or [])]
+    if not links:
+        return {pid: None for pid in product_ids}
+
+    supplier_ids = list({sid for _, sid in links})
+
+    # 2. Latest price per (product_id, supplier_id): fetch all price_history for these products, ordered desc
+    ph_resp = (
+        client.table("price_history")
+        .select("product_id, supplier_id, price, recorded_year, recorded_month")
+        .in_("product_id", pid_list)
+        .order("recorded_year", desc=True)
+        .order("recorded_month", desc=True)
+        .execute()
+    )
+    latest_price: dict[tuple[int, int], float] = {}
+    for row in ph_resp.data or []:
+        key = (row["product_id"], row["supplier_id"])
+        if key not in latest_price:
+            latest_price[key] = row["price"]
+
+    # 3. Supplier names
+    supp_resp = (
+        client.table("suppliers")
+        .select("id, company_name")
+        .in_("id", supplier_ids)
+        .execute()
+    )
+    supplier_names = {r["id"]: r.get("company_name") or "" for r in (supp_resp.data or [])}
+
+    # Build per-product list of (supplier_id, supplier_name, price)
+    product_candidates: dict[int, list[dict[str, Any]]] = {pid: [] for pid in product_ids}
+    for (pid, sid) in links:
+        price = latest_price.get((pid, sid))
+        if price is None:
+            continue
+        product_candidates[pid].append({
+            "supplier_id": sid,
+            "supplier_name": supplier_names.get(sid, ""),
+            "price": price,
+        })
+
+    best_cache: dict[int, Optional[dict[str, Any]]] = {}
+    for pid in product_ids:
+        candidates = product_candidates.get(pid) or []
+        if not candidates:
+            best_cache[pid] = None
+            continue
+        highest_price = max(c["price"] for c in candidates)
+        best = min(candidates, key=lambda x: x["price"])
+        best["highest_price"] = highest_price
+        best_cache[pid] = best
+
+    return best_cache
+
+
 def get_savings_history() -> List[dict[str, Any]]:
-    """Compute savings from approved/dispatched/delivered orders."""
+    """Compute savings from approved/dispatched/delivered orders.
+    Builds a product→best_price cache with batched Supabase queries (3 round-trips total).
+    """
     client = get_supabase_admin()
     response = (
         client.table("orders")
@@ -123,8 +195,22 @@ def get_savings_history() -> List[dict[str, Any]]:
         .execute()
     )
 
+    # Collect all distinct product IDs across all orders first
+    all_product_ids: set[int] = set()
+    orders_data = response.data or []
+    for order in orders_data:
+        items = order.get("order_items", [])
+        if isinstance(items, dict):
+            items = [items]
+        for it in items:
+            pid = it.get("product_id")
+            if pid is not None:
+                all_product_ids.add(pid)
+
+    best_cache = _build_best_supplier_cache_batch(all_product_ids)
+
     history = []
-    for order in response.data or []:
+    for order in orders_data:
         items = order.get("order_items", [])
         if isinstance(items, dict):
             items = [items]
@@ -136,7 +222,8 @@ def get_savings_history() -> List[dict[str, Any]]:
             for it in items
         ]
 
-        savings = compute_order_savings(order_items)
+        # compute_order_savings_from_cache avoids repeated lookups
+        savings = _compute_savings_from_cache(order_items, best_cache)
         history.append(
             {
                 "order_id": order["id"],
@@ -148,3 +235,49 @@ def get_savings_history() -> List[dict[str, Any]]:
         )
 
     return history
+
+
+def _compute_savings_from_cache(
+    order_items: List[dict[str, Any]],
+    best_cache: dict[int, Any],
+) -> dict[str, Any]:
+    """Compute savings for a list of order items using a pre-built best_cache dict
+    (product_id → best supplier data) to avoid redundant DB calls.
+    """
+    per_item = []
+    total_savings = 0.0
+
+    for item in order_items:
+        product_id = item.get("product_id")
+        quantity = item.get("quantity_requested", item.get("quantity", 0))
+        best = best_cache.get(product_id) if product_id is not None else None
+
+        if not best:
+            per_item.append(
+                {
+                    "product_id": product_id,
+                    "suggested_supplier_id": None,
+                    "suggested_price": None,
+                    "highest_price": None,
+                    "savings": 0.0,
+                }
+            )
+            continue
+
+        highest = best.get("highest_price") or best["price"]
+        lowest = best["price"]
+        savings = (highest - lowest) * quantity
+        total_savings += savings
+
+        per_item.append(
+            {
+                "product_id": product_id,
+                "suggested_supplier_id": best["supplier_id"],
+                "suggested_supplier_name": best["supplier_name"],
+                "suggested_price": best["price"],
+                "highest_price": highest,
+                "savings": savings,
+            }
+        )
+
+    return {"per_item": per_item, "total_savings": total_savings}
