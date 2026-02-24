@@ -549,7 +549,8 @@ export default function InsumosPage() {
                       <tr>
                         <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Proveedor</th>
                         <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Precio actual</th>
-                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Variación</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Última actualización</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Variación vs mejor precio</th>
                         <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Mejor precio</th>
                       </tr>
                     </thead>
@@ -559,6 +560,15 @@ export default function InsumosPage() {
                           <td className="px-3 py-2 text-sm">{item.supplier_name}</td>
                           <td className={`px-3 py-2 text-sm font-medium ${item.is_best_price ? 'text-green-700' : ''}`}>
                             {formatCurrency(item.current_price)}
+                          </td>
+                          <td className="px-3 py-2 text-sm text-gray-500">
+                            {item.last_updated_at
+                              ? new Date(item.last_updated_at).toLocaleDateString('es-CO', {
+                                  day: '2-digit',
+                                  month: 'short',
+                                  year: 'numeric',
+                                })
+                              : '—'}
                           </td>
                           <td className="px-3 py-2 text-sm">
                             {item.variation_pct == null ? '—' : `${item.variation_pct.toFixed(2)}%`}

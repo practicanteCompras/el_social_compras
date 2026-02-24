@@ -72,6 +72,7 @@ class PriceComparison(BaseModel):
     previous_price: Optional[float] = None
     variation_pct: Optional[float] = None
     is_best_price: bool = False
+    last_updated_at: Optional[datetime] = None
 
 
 class MovementCreate(BaseModel):

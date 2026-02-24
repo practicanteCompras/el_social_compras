@@ -344,16 +344,19 @@ def get_price_comparison(product_id: int) -> List[dict[str, Any]]:
     ).data or []
     name_by_sid: dict[int, str] = {s["id"]: s["company_name"] for s in suppliers_resp}
 
-    # Batch-fetch last 2 price records per supplier (ordered newest-first)
+    # Batch-fetch price records per supplier (ordered newest-first).
+    # created_at/id are used as tie-breakers when month/year are equal.
     # We limit to 2 * len(supplier_ids) and group in Python to get
     # current + previous price per supplier without N separate queries.
     hist_resp = (
         client.table("price_history")
-        .select("supplier_id, price, recorded_year, recorded_month")
+        .select("id, supplier_id, price, recorded_year, recorded_month, created_at")
         .eq("product_id", product_id)
         .in_("supplier_id", supplier_ids)
         .order("recorded_year", desc=True)
         .order("recorded_month", desc=True)
+        .order("created_at", desc=True)
+        .order("id", desc=True)
         .execute()
     ).data or []
 
@@ -431,14 +434,7 @@ def get_price_comparison(product_id: int) -> List[dict[str, Any]]:
         current_price = _parse_price_value(hist[0]["price"]) if hist else None
         previous_price = _parse_price_value(hist[1]["price"]) if len(hist) > 1 else None
         supplier_name = name_by_sid.get(sid, "")
-
-        # Automatic variation vs previous price; 0 when it's the first price (no previous).
-        variation_pct = None
-        if current_price is not None:
-            if previous_price is not None and previous_price > 0:
-                variation_pct = ((current_price - previous_price) / previous_price) * 100
-            else:
-                variation_pct = 0.0  # First price for this supplier: no previous to compare.
+        last_updated_at = hist[0].get("created_at") if hist else None
 
         results.append(
             {
@@ -447,8 +443,9 @@ def get_price_comparison(product_id: int) -> List[dict[str, Any]]:
                 "slot": slot,
                 "current_price": current_price,
                 "previous_price": previous_price,
-                "variation_pct": variation_pct,
+                "variation_pct": None,
                 "is_best_price": False,
+                "last_updated_at": last_updated_at,
             }
         )
 
@@ -463,18 +460,20 @@ def get_price_comparison(product_id: int) -> List[dict[str, Any]]:
                 r["current_price"] = r["current_price"] * 1000
             if r["previous_price"] is not None and 0 < r["previous_price"] < 100:
                 r["previous_price"] = r["previous_price"] * 1000
-            if r["current_price"] is not None:
-                if r["previous_price"] is not None and r["previous_price"] > 0:
-                    r["variation_pct"] = ((r["current_price"] - r["previous_price"]) / r["previous_price"]) * 100
-                else:
-                    r["variation_pct"] = 0.0
 
-    # Best price = lowest current price (best for the buyer).
+    # Best price = lowest current price (best for the buyer) and variation vs best price.
     valid = [r for r in results if r["current_price"] is not None]
     if valid:
         min_price = min(r["current_price"] for r in valid)
         for r in results:
-            r["is_best_price"] = r["current_price"] == min_price
+            is_best = r["current_price"] == min_price
+            r["is_best_price"] = is_best
+            if r["current_price"] is None or min_price is None:
+                r["variation_pct"] = None
+            elif is_best:
+                r["variation_pct"] = 0.0
+            else:
+                r["variation_pct"] = ((r["current_price"] - min_price) / min_price) * 100
 
     return results
 
