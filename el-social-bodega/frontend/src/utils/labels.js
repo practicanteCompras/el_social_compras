@@ -66,6 +66,7 @@ export const LABELS = {
     email: 'Correo',
     responseDays: 'Días de Respuesta',
     creditDays: 'Días de Crédito',
+    deliveryTerm: 'Plazo de Entrega',
   },
   inventory: {
     title: 'Inventario',

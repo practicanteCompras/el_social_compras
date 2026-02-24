@@ -549,6 +549,8 @@ export default function InsumosPage() {
                       <tr>
                         <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Proveedor</th>
                         <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Precio actual</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Días de crédito</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Plazo de entrega</th>
                         <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Última actualización</th>
                         <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Variación vs mejor precio</th>
                         <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Mejor precio</th>
@@ -560,6 +562,12 @@ export default function InsumosPage() {
                           <td className="px-3 py-2 text-sm">{item.supplier_name}</td>
                           <td className={`px-3 py-2 text-sm font-medium ${item.is_best_price ? 'text-green-700' : ''}`}>
                             {formatCurrency(item.current_price)}
+                          </td>
+                          <td className="px-3 py-2 text-sm text-gray-700">
+                            {item.credit_days == null ? '—' : `${item.credit_days} días`}
+                          </td>
+                          <td className="px-3 py-2 text-sm text-gray-700">
+                            {item.delivery_days == null ? '—' : `${item.delivery_days} días`}
                           </td>
                           <td className="px-3 py-2 text-sm text-gray-500">
                             {item.last_updated_at

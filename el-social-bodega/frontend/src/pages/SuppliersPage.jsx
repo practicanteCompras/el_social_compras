@@ -210,6 +210,8 @@ export default function SuppliersPage() {
                   <th className="px-4 py-3">{LABELS.suppliers.category}</th>
                   <th className="px-4 py-3">{LABELS.suppliers.advisor}</th>
                   <th className="px-4 py-3">{LABELS.suppliers.phone1}</th>
+                  <th className="px-4 py-3">{LABELS.suppliers.creditDays}</th>
+                  <th className="px-4 py-3">{LABELS.suppliers.deliveryTerm}</th>
                   {isAdmin && (
                     <th className="px-4 py-3 text-right">{LABELS.common.actions}</th>
                   )}
@@ -230,6 +232,12 @@ export default function SuppliersPage() {
                     </td>
                     <td className="px-4 py-3 text-gray-600">{s.advisor_name || '—'}</td>
                     <td className="px-4 py-3 text-gray-600">{s.contact_phone_1 || '—'}</td>
+                    <td className="px-4 py-3 text-gray-600">
+                      {s.credit_days == null ? '—' : `${s.credit_days} días`}
+                    </td>
+                    <td className="px-4 py-3 text-gray-600">
+                      {s.response_days == null ? '—' : `${s.response_days} días`}
+                    </td>
                     {isAdmin && (
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-2">
@@ -370,7 +378,7 @@ export default function SuppliersPage() {
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{LABELS.suppliers.responseDays}</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{LABELS.suppliers.deliveryTerm}</label>
                   <input
                     type="number"
                     name="response_days"

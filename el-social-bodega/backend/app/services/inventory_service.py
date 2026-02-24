@@ -338,11 +338,17 @@ def get_price_comparison(product_id: int) -> List[dict[str, Any]]:
     # Batch-fetch supplier names in one query
     suppliers_resp = (
         client.table("suppliers")
-        .select("id, company_name")
+        .select("id, company_name, credit_days, response_days")
         .in_("id", supplier_ids)
         .execute()
     ).data or []
     name_by_sid: dict[int, str] = {s["id"]: s["company_name"] for s in suppliers_resp}
+    credit_days_by_sid: dict[int, Optional[int]] = {
+        s["id"]: s.get("credit_days") for s in suppliers_resp
+    }
+    delivery_days_by_sid: dict[int, Optional[int]] = {
+        s["id"]: s.get("response_days") for s in suppliers_resp
+    }
 
     # Batch-fetch price records per supplier (ordered newest-first).
     # created_at/id are used as tie-breakers when month/year are equal.
@@ -434,6 +440,8 @@ def get_price_comparison(product_id: int) -> List[dict[str, Any]]:
         current_price = _parse_price_value(hist[0]["price"]) if hist else None
         previous_price = _parse_price_value(hist[1]["price"]) if len(hist) > 1 else None
         supplier_name = name_by_sid.get(sid, "")
+        credit_days = credit_days_by_sid.get(sid)
+        delivery_days = delivery_days_by_sid.get(sid)
         last_updated_at = hist[0].get("created_at") if hist else None
 
         results.append(
@@ -446,6 +454,8 @@ def get_price_comparison(product_id: int) -> List[dict[str, Any]]:
                 "variation_pct": None,
                 "is_best_price": False,
                 "last_updated_at": last_updated_at,
+                "credit_days": credit_days,
+                "delivery_days": delivery_days,
             }
         )
 
